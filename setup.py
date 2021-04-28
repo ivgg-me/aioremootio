@@ -28,11 +28,7 @@ setup(
     package_dir={"": "src"},
     packages=find_packages(where="src"),
     python_requires=">=3.9",
-    install_requires=[
-        "aiohttp~=3.7.3",
-        "pycryptodome==3.8.1",
-        "async-class~=0.3.0"
-    ],
+    install_requires=list(val.strip() for val in open("requirements.txt")),
     project_urls={
         "Bug Tracker": "https://github.com/ivgg-me/aioremootio/issues",
         "Source": "https://github.com/ivgg-me/aioremootio/"

@@ -1,0 +1,3 @@
+aiohttp~=3.7.3
+pycryptodome==3.8.1
+async-class~=0.3.0
