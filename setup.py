@@ -24,7 +24,7 @@ setup(
         "Topic :: Home Automation",
         "Topic :: Software Development :: Libraries"
     ],
-    keywords="remootio, client, library",
+    keywords="remootio, client, library, asynchronous",
     package_dir={"": "src"},
     packages=find_packages(where="src"),
     python_requires=">=3.9",
