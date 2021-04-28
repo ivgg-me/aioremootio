@@ -30,7 +30,7 @@ setup(
     python_requires=">=3.9",
     install_requires=[
         "aiohttp~=3.7.3",
-        "pycryptodome~=3.9.9",
+        "pycryptodome==3.8.1",
         "async-class~=0.3.0"
     ],
     project_urls={

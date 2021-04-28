@@ -12,13 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ARGUMENT_CONNECTION_HOLDER = "connection_holder"
-ARGUMENT_DECRYPTER = "decrypter"
-ARGUMENT_FRAME_LISTENER = "frame_listener"
 ARGUMENT_FRAME_SENDER = "frame_sender"
 ARGUMENT_HEARTBEAT = "heartbeat"
 ARGUMENT_LOGGER = "logger"
-ARGUMENT_CALLBACK = "callback"
 
 CONNECTION_OPTION_KEY_IP_ADDRESS = "ip_address"
 CONNECTION_OPTION_KEY_API_SECRET_KEY = "api_secret_key"
@@ -28,4 +24,4 @@ DEVICE_CONNECTING_HEARTBEAT = 2.5
 MESSAGE_HANDLER_HEARTBEAT = 10
 PING_SENDER_HEARTBEAT = 60
 AUTHENTICATOR_HEARTBEAT = MESSAGE_HANDLER_HEARTBEAT
-ENCODING = "utf-8"
+ENCODING = "latin-1"

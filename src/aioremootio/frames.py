@@ -14,7 +14,7 @@
 
 from abc import ABC, abstractmethod
 from typing import Optional, Any, NoReturn
-from .enums import ErrorType, ActionType, State, EventType, KeyType, DeviceType, FrameType
+from .enums import ErrorType, ActionType, State, EventType, KeyType, DeviceType, FrameType, ErrorCode, EventSource
 from .models import Key
 
 
@@ -91,16 +91,18 @@ class ServerHelloFrame(AbstractFrame):
     __serial_number: Optional[str]
     __device_type: Optional[DeviceType]
 
-    def __init__(self, frame: dict):
-        self.__api_version = frame["apiVersion"]
+    def __init__(self, json: dict):
+        ensure_frame_type(json, FrameType.SERVER_HELLO)
+
+        self.__api_version = json["apiVersion"]
         self.__serial_number = None
         self.__device_type = None
 
-        if "serialNumber" in frame:
-            self.__serial_number = frame["serialNumber"]
+        if "serialNumber" in json:
+            self.__serial_number = json["serialNumber"]
 
-        if "remootioVersion" in frame:
-            self.__device_type = DeviceType(frame["remootioVersion"])
+        if "remootioVersion" in json:
+            self.__device_type = DeviceType(json["remootioVersion"])
 
     @property
     def api_version(self) -> int:
@@ -118,21 +120,32 @@ class ServerHelloFrame(AbstractFrame):
 class ErrorFrame(AbstractFrame):
     __error_type: ErrorType
 
-    def __init__(self, error_type: ErrorType):
-        self.__error_type = error_type
+    def __init__(self, error_type: ErrorType = None, json: dict = None):
+        if error_type is not None and json is None:
+            self.__error_type = error_type
+        elif error_type is None and json is not None:
+            ensure_frame_type(json, FrameType.ERROR)
+
+            self.__error_type = ErrorType(json["errorMessage"])
+        else:
+            raise RuntimeError("Unable to instantiate ErrorFrame based on the passed data.")
 
     @property
     def error_type(self) -> ErrorType:
         return self.__error_type
 
 
-class ChallengeFrame(AbstractFrame):
+class ChallengeFrame(AbstractFrame, AbstractJSONHolderFrame):
+    __json: dict
     __session_key: str
     __initial_action_id: int
 
-    def __init__(self, frame: dict):
-        self.__session_key = frame["challenge"]["sessionKey"]
-        self.__initial_action_id = frame["challenge"]["initialActionId"]
+    def __init__(self, json: dict):
+        ensure_frame_type(json, FrameType.CHALLENGE)
+
+        self.__json = json
+        self.__session_key = json["challenge"]["sessionKey"]
+        self.__initial_action_id = json["challenge"]["initialActionId"]
 
     @property
     def session_key(self) -> str:
@@ -141,6 +154,10 @@ class ChallengeFrame(AbstractFrame):
     @property
     def initial_action_id(self) -> int:
         return self.__initial_action_id
+
+    @property
+    def json(self) -> dict:
+        return self.__json
 
 
 class AbstractActionFrame(AbstractFrame):
@@ -174,37 +191,65 @@ class ActionRequestFrame(AbstractActionFrame, AbstractJSONHolderFrame):
         }
 
 
-class ActionResponseFrame(AbstractActionFrame, AbstractStateHolderFrame, AbstractUptimeHolderFrame):
+class ActionResponseFrame(AbstractActionFrame, AbstractStateHolderFrame, AbstractUptimeHolderFrame,
+                          AbstractJSONHolderFrame):
+    __json: dict
     __success: bool
     __relay_triggered: bool
-    __error_code: str
+    __error_code: Optional[ErrorCode]
 
-    def __init__(self, frame: dict):
-        AbstractActionFrame.__init__(self, frame["response"]["id"], ActionType(frame["response"]["type"]))
-        AbstractStateHolderFrame.__init__(self, State(frame["response"]["state"]))
-        AbstractUptimeHolderFrame.__init__(self, frame["response"]["t100ms"] * 100 / 1000)
-        self.__success = str(frame["response"]["success"]).lower() == "true"
-        self.__relay_triggered = str(frame["response"]["relayTriggered"]).lower() == "true"
-        self.__error_code = frame["response"]["errorCode"]
+    def __init__(self, json: dict):
+        AbstractActionFrame.__init__(self, json["response"]["id"], ActionType(json["response"]["type"]))
+        AbstractStateHolderFrame.__init__(self, State(json["response"]["state"]))
+        AbstractUptimeHolderFrame.__init__(self, json["response"]["t100ms"] * 100 / 1000)
+        self.__json = json
+        self.__success = str(json["response"]["success"]).lower() == "true"
+        self.__relay_triggered = str(json["response"]["relayTriggered"]).lower() == "true"
+        self.__error_code = None
+        if not self.success and "errorCode" in json["response"] and len(json["response"]["errorCode"]) > 0:
+            self.__error_code = ErrorCode(json["response"]["errorCode"])
 
     @property
     def success(self) -> bool:
         return self.__success
 
+    @property
+    def relay_triggered(self) -> bool:
+        return self.__relay_triggered
 
-class EventFrame(AbstractFrame, AbstractStateHolderFrame, AbstractUptimeHolderFrame):
+    @property
+    def error_code(self) -> Optional[ErrorCode]:
+        return self.__error_code
+
+    @property
+    def json(self) -> dict:
+        return self.__json
+
+
+class EventFrame(AbstractFrame, AbstractStateHolderFrame, AbstractUptimeHolderFrame, AbstractJSONHolderFrame):
+    __json: dict
+    __event_source: Optional[EventSource]
     __event_type: EventType
     __key: Optional[Key]
 
-    def __init__(self, frame: dict):
-        AbstractStateHolderFrame.__init__(self, State(frame["event"]["state"]))
-        AbstractUptimeHolderFrame.__init__(self, frame["event"]["t100ms"] * 100 / 1000)
-        self.__event_type = EventType(frame["event"]["type"])
+    def __init__(self, json: dict):
+        AbstractStateHolderFrame.__init__(self, State(json["event"]["state"]))
+        AbstractUptimeHolderFrame.__init__(self, json["event"]["t100ms"] * 100 / 1000)
+        self.__json = json
+        self.__event_source = None
+        self.__event_type = EventType(json["event"]["type"])
         self.__key = None
 
-        if "data" in frame:
-            if "keyType" in frame["data"] and "keyNr" in frame["data"]:
-                self.__key = Key(KeyType(frame["data"]["keyType"]), frame["data"]["keyNr"])
+        if "data" in json["event"]:
+            if "keyType" in json["event"]["data"] and "keyNr" in json["event"]["data"]:
+                self.__key = Key(KeyType(json["event"]["data"]["keyType"]), json["event"]["data"]["keyNr"])
+
+            if "via" in json["event"]["data"]:
+                self.__event_source = EventSource(json["event"]["data"]["via"])
+
+    @property
+    def event_source(self) -> Optional[EventSource]:
+        return self.__event_source
 
     @property
     def event_type(self) -> EventType:
@@ -214,6 +259,10 @@ class EventFrame(AbstractFrame, AbstractStateHolderFrame, AbstractUptimeHolderFr
     def key(self) -> Optional[Key]:
         return self.__key
 
+    @property
+    def json(self) -> dict:
+        return self.__json
+
 
 class EncryptedFrame(AbstractFrame, AbstractJSONHolderFrame):
     __json: Optional[dict]
@@ -222,30 +271,32 @@ class EncryptedFrame(AbstractFrame, AbstractJSONHolderFrame):
     __payload: Optional[str]
     __mac: str
 
-    def __init__(self, json: dict):
-        self.__json = json
-        self.__data = self.json["data"]
-        self.__iv = self.data["iv"]
-        self.__payload = self.data["payload"]
-        self.__mac = self.json["mac"]
+    def __init__(self, json: dict = None, iv: str = None, payload: str = None, mac: str = None):
+        if json is not None and iv is None and payload is None and mac is None:
+            ensure_frame_type(json, FrameType.ENCRYPTED)
 
-    def __init(self, iv: str, payload: str, mac: str):
-        self.__json = None
-        self.__data = None
-        self.__iv = iv
-        self.__payload = payload
-        self.__mac = mac
+            self.__json = json
+            self.__data = self.json["data"]
+            self.__iv = self.data["iv"]
+            self.__payload = self.data["payload"]
+            self.__mac = self.json["mac"]
+        elif json is None and iv is not None and payload is not None and mac is not None:
+            self.__iv = iv
+            self.__payload = payload
+            self.__mac = mac
 
-        self.__data = {
-            "iv": self.iv,
-            "payload": self.payload
-        }
+            self.__data = {
+                "iv": self.iv,
+                "payload": self.payload
+            }
 
-        self.__json = {
-            "type": "ENCRYPTED",
-            "data": self.data,
-            "mac": self.mac
-        }
+            self.__json = {
+                "type": "ENCRYPTED",
+                "data": self.data,
+                "mac": self.mac
+            }
+        else:
+            raise RuntimeError("Unable to instantiate EncryptedFrame based on the passed data.")
 
     @property
     def json(self) -> dict:

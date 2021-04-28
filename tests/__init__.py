@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass
-from typing import Union
+from typing import Union, Optional
 from aioremootio.models import ConnectionOptions
 import json
 import os
@@ -26,8 +26,8 @@ class RemootioDeviceConfiguration(ConnectionOptions):
 
 
 def create_remootio_device_configurations(
-        default_device_configuration: Union[RemootioDeviceConfiguration, dict] = None
-) -> RemootioDeviceConfiguration:
+        default_device_configuration: Optional[Union[RemootioDeviceConfiguration, dict]] = None
+) -> Optional[RemootioDeviceConfiguration]:
     result = None
 
     filename = "remootio_devices.configuration.json"
