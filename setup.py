@@ -8,7 +8,7 @@ long_description = (here / 'README.md').read_text(encoding='utf-8')
 setup(
     name="aioremootio",
     version="0.0.1.dev1",
-    description="Client for Remootio (http://www.remootion.com/)",
+    description="An asynchronous API client library for Remootio (http://www.remootion.com/)",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/ivgg-me/aioremootio",
