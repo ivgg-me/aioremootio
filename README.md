@@ -14,20 +14,89 @@ This client library supports currently the listening to following kind of events
   connected gate or garage door
 * `LEFT_OPEN` which is triggered by the device when the connected gate or garage door has been left open
 
+## Using the library
+
+The following example demonstrates how you can use this library.
+
+```python
+from typing import NoReturn
+import logging
+import asyncio
+import aiohttp
+import aioremootio
+
+class ExampleStateListener(aioremootio.Listener[aioremootio.StateChange]):
+    __logger: logging.Logger
+
+    def __init__(self, logger: logging.Logger):
+        self.__logger = logger
+
+    async def execute(self, client: aioremootio.RemootioClient, subject: aioremootio.StateChange) -> NoReturn:
+        self.__logger.info("State of the device has been changed. IPAddress [%s] OldState [%s] NewState [%s]" %
+                           (client.ip_address, subject.old_state, subject.new_state))
+
+
+async def main() -> NoReturn:
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.INFO)
+
+    handler: logging.Handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter(fmt="%(asctime)s [%(levelname)s] %(message)s"))
+    logger.addHandler(handler)
+    
+    connection_options: aioremootio.ConnectionOptions = \
+        aioremootio.ConnectionOptions("192.168.0.1", "API_SECRET_KEY", "API_AUTH_KEY")
+
+    state_change_listener: aioremootio.Listener[aioremootio.StateChange] = ExampleStateListener(logger)
+
+    remootio_client: aioremootio.RemootioClient
+
+    async with aiohttp.ClientSession() as client_session:
+        remootio_client = \
+            await aioremootio.RemootioClient(
+                connection_options,
+                client_session,
+                aioremootio.LoggerConfiguration(logger=logger),
+                state_change_listener
+            )
+
+        logger.info("State of the device: %s", remootio_client.state)
+        
+        if remootio_client.state == aioremootio.State.NO_SENSOR_INSTALLED:
+            await remootio_client.trigger()
+        else:
+            await remootio_client.trigger_open()
+            await remootio_client.trigger_close()            
+
+        while True:
+            await asyncio.sleep(0.1)
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
+```
+
+To get the _API Secret Key_ and _API Auth Key_ of your [Remootio](https://remootio.com/) device you must enable the 
+API on it according to the 
+[Remootio Websocket API documentation](https://github.com/remootio/remootio-api-documentation). 
+
 ## Running the bundled example
 
-To run the bundled example `example.py` you must 
-1. enable the API on your [Remootio](https://remootio.com/) device to get the _API Secret Key_ and _API Auth Key_ of 
-   it, and
-2. add the source folder `./src` of this library to your `PYTHONPATH`.
+The [project source](https://github.com/ivgg-me/aioremootio) does also contain an example.
 
-About enabling the API on your device please consult the
-[Remootio Websocket API documentation](https://github.com/remootio/remootio-api-documentation).
+To run the bundled example [`example.py`](https://github.com/ivgg-me/aioremootio/blob/master/example.py) you must 
+1. also enable the API on your [Remootio](https://remootio.com/) device to get the _API Secret Key_ and _API Auth 
+   Key_ of it, and
+2. add the source folder [`/src`](https://github.com/ivgg-me/aioremootio/tree/master/src) of the repository to your 
+   `PYTHONPATH`.
 
 After the two steps described above you can run the bundled example `example.py` with the argument `--help` to show the 
 usage information.
 
-```
+```commandline
 python example.py --help
 ```
 
@@ -44,9 +113,6 @@ to the following template.
     "api_version": API-VERSION-OF-YOUR-DEVICE
 }
 ```
-
-You can get the API version of your device based on the firmware version of it from the
-[Remootio Websocket API documentation](https://github.com/remootio/remootio-api-documentation).
 
 ---
 
