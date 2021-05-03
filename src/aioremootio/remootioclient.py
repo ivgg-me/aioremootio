@@ -434,12 +434,13 @@ class RemootioClient(AsyncClass):
                         (frame.action_id, frame.action_type, frame.state, frame.relay_triggered))
 
                 new_state: State = frame.state
-                if frame.action_type == ActionType.OPEN and frame.relay_triggered:
-                    new_state = State.OPENING
-                elif frame.action_type == ActionType.CLOSE and frame.relay_triggered:
-                    new_state = State.CLOSING
 
                 await self.__change_state(new_state)
+
+                if frame.action_type == ActionType.OPEN and frame.relay_triggered:
+                    await self.__change_state(State.OPENING)
+                elif frame.action_type == ActionType.CLOSE and frame.relay_triggered:
+                    await self.__change_state(State.CLOSING)
             else:
                 if frame.error_code != ErrorCode.UNKNOWN:
                     self.__logger.warning(
@@ -583,8 +584,59 @@ class RemootioClient(AsyncClass):
                                       exc_info=True)
 
     async def __change_state(self, new_state: State) -> NoReturn:
-        if self.state != new_state:
-            old_state: State = self.__state
+        old_state: State = self.__state
+
+        do_change_state: bool = False
+        if old_state == State.NO_SENSOR_INSTALLED:
+            do_change_state = new_state != State.NO_SENSOR_INSTALLED
+        elif old_state == State.UNKNOWN:
+            do_change_state = new_state != State.UNKNOWN
+        elif old_state == State.CLOSED:
+            do_change_state = \
+                (new_state == State.UNKNOWN) or \
+                (new_state == State.NO_SENSOR_INSTALLED) or \
+                (new_state == State.OPENING) or \
+                (new_state == State.OPEN)
+
+            if new_state == State.CLOSING:
+                new_state = State.UNKNOWN
+                do_change_state = True
+        elif old_state == State.OPEN:
+            do_change_state = \
+                (new_state == State.UNKNOWN) or \
+                (new_state == State.NO_SENSOR_INSTALLED) or \
+                (new_state == State.CLOSING) or \
+                (new_state == State.CLOSED)
+
+            if new_state == State.OPENING:
+                new_state = State.UNKNOWN
+                do_change_state = True
+        elif old_state == State.CLOSING:
+            do_change_state = \
+                (new_state == State.UNKNOWN) or \
+                (new_state == State.NO_SENSOR_INSTALLED) or \
+                (new_state == State.CLOSED)
+
+            if new_state == State.OPENING:
+                new_state = State.UNKNOWN
+                do_change_state = True
+            elif new_state == State.OPEN:
+                await self.__change_state(State.UNKNOWN)
+                do_change_state = True
+        elif old_state == State.OPENING:
+            do_change_state = \
+                (new_state == State.UNKNOWN) or \
+                (new_state == State.NO_SENSOR_INSTALLED) or \
+                (new_state == State.OPEN)
+
+            if new_state == State.CLOSING:
+                new_state = State.UNKNOWN
+                do_change_state = True
+            elif new_state == State.CLOSED:
+                await self.__change_state(State.UNKNOWN)
+                do_change_state = True
+
+        if do_change_state:
             self.__state = new_state
 
             self.__logger.info(
