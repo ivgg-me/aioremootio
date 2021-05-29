@@ -187,13 +187,14 @@ class RemootioClient(AsyncClass):
         try:
             await self.__invoke_state_listener(StateChange(None, self.state))
 
-            await self.__open_connection()
+            await self.__open_connection(handle_connection_error=False)
 
-            self.create_task(self.__receive_and_handle_messages())
+            if self.connected and self.authenticated:
+                self.create_task(self.__receive_and_handle_messages())
 
-            self.create_task(self.__send_pings())
+                self.create_task(self.__send_pings())
 
-            await self.__send_frame(HelloFrame())
+                await self.__send_frame(HelloFrame())
         except BaseException as ex:
             self.__logger.exception("Failed to initialize this client.")
             raise RemootioClientError(self, "Failed to initialize this client.") from ex
@@ -203,7 +204,7 @@ class RemootioClient(AsyncClass):
 
         await self.__close_connection()
 
-    async def __open_connection(self) -> ClientWebSocketResponse:
+    async def __open_connection(self, handle_connection_error: bool = True) -> ClientWebSocketResponse:
         if not self.connected or not self.authenticated:
             if self.connected and not self.authenticated:
                 self.__logger.warning(
@@ -216,9 +217,12 @@ class RemootioClient(AsyncClass):
             try:
                 self.__ws = await self.__client_session.ws_connect(f"ws://{self.__connection_options.ip_address}:8080/")
                 self.__logger.info("Connection to the device has been established successfully.")
-            except:
-                self.__logger.exception("Unable to establish connection to the device.")
+            except BaseException as ex:
                 self.__ws = None
+                if handle_connection_error:
+                    self.__logger.exception("Unable to establish connection to the device.")
+                else:
+                    raise RemootioClientError(self, "Unable to establish connection to the device.") from ex
 
             # Authenticating
             if self.connected and not self.authenticated:
@@ -232,7 +236,7 @@ class RemootioClient(AsyncClass):
                 self.__logger.info("Closing connection to the device...")
                 await self.__ws.close()
         except:
-            self.__logger.exception("Unable to close connection to the device because if an error.")
+            self.__logger.exception("Unable to close connection to the device because of an error.")
 
         self.__session_key = None
         self.__last_action_id = None
@@ -320,10 +324,14 @@ class RemootioClient(AsyncClass):
                 if not self.__terminating:
                     ws: ClientWebSocketResponse = await self.__open_connection()
 
-                    try:
-                        await self.__send_frame(PingFrame(), ws)
-                    except:
-                        self.__logger.warning("Failed to send PING.")
+                    if ws is not None:
+                        try:
+                            await self.__send_frame(PingFrame(), ws)
+                        except:
+                            self.__logger.warning("Failed to send PING.")
+                    else:
+                        self.__logger.warning("Sending PINGs by this client will be delayed "
+                                              "because connection to the device can't be established.")
 
                     await asyncio.sleep(PING_SENDER_HEARTBEAT)
                 else:
@@ -342,45 +350,50 @@ class RemootioClient(AsyncClass):
                 if not self.__terminating:
                     ws: ClientWebSocketResponse = await self.__open_connection()
 
-                    async for msg in ws:
-                        try:
-                            self.__logger.debug("Message received from device. Type [%s]", msg.type)
+                    if ws is not None:
+                        async for msg in ws:
+                            try:
+                                self.__logger.debug("Message received from device. Type [%s]", msg.type)
 
-                            if msg.type == WSMsgType.TEXT:
-                                msg_json: dict = msg.json()
-                                self.__logger.debug(f"< {json.dumps(msg_json)}")
+                                if msg.type == WSMsgType.TEXT:
+                                    msg_json: dict = msg.json()
+                                    self.__logger.debug(f"< {json.dumps(msg_json)}")
 
-                                frame_type = retrieve_frame_type(msg_json)
+                                    frame_type = retrieve_frame_type(msg_json)
 
-                                if frame_type is None:
-                                    self.__logger.error("Failed to handle message. Unable to determine frame type.")
-                                elif frame_type == FrameType.ERROR:
-                                    await self.__handle_error_frame(ErrorFrame(json=msg_json))
-                                elif frame_type == FrameType.PONG:
+                                    if frame_type is None:
+                                        self.__logger.error("Failed to handle message. Unable to determine frame type.")
+                                    elif frame_type == FrameType.ERROR:
+                                        await self.__handle_error_frame(ErrorFrame(json=msg_json))
+                                    elif frame_type == FrameType.PONG:
+                                        pass
+                                    elif frame_type == FrameType.SERVER_HELLO:
+                                        await self.__handle_server_hello_frame(ServerHelloFrame(msg_json))
+                                    elif frame_type == FrameType.ENCRYPTED:
+                                        await self.__handle_encrypted_frame(EncryptedFrame(msg_json))
+                                    else:
+                                        self.__logger.error(
+                                            "Failed to handle message. Frame of type isn't supported. FrameType [%s]",
+                                            frame_type
+                                        )
+                                elif msg.type == WSMsgType.BINARY:
+                                    self.__logger.warning("Binary messages aren't supported.")
+                                elif msg.type == WSMsgType.CLOSE:
+                                    self.__logger.info("Connection was closed by the device.")
+                                    await self.__handle_connection_closed()
+                                elif msg.type == WSMsgType.PING:
+                                    await ws.pong()
+                                elif msg.type == WSMsgType.PONG:
                                     pass
-                                elif frame_type == FrameType.SERVER_HELLO:
-                                    await self.__handle_server_hello_frame(ServerHelloFrame(msg_json))
-                                elif frame_type == FrameType.ENCRYPTED:
-                                    await self.__handle_encrypted_frame(EncryptedFrame(msg_json))
                                 else:
-                                    self.__logger.error(
-                                        "Failed to handle message. Frame of type isn't supported. FrameType [%s]",
-                                        frame_type
-                                    )
-                            elif msg.type == WSMsgType.BINARY:
-                                self.__logger.warning("Binary messages aren't supported.")
-                            elif msg.type == WSMsgType.CLOSE:
-                                self.__logger.info("Connection was closed by the device.")
-                                await self.__handle_connection_closed()
-                            elif msg.type == WSMsgType.PING:
-                                await ws.pong()
-                            elif msg.type == WSMsgType.PONG:
-                                pass
-                            else:
-                                pass
-                        except:
-                            self.__logger.error("Failed to handle received message.")
+                                    pass
+                            except:
+                                self.__logger.error("Failed to handle received message.")
+                        else:
+                            await asyncio.sleep(MESSAGE_HANDLER_HEARTBEAT)
                     else:
+                        self.__logger.warning("Receiving and handling of messages by this client will be delayed "
+                                              "because connection to the device can't be established.")
                         await asyncio.sleep(MESSAGE_HANDLER_HEARTBEAT)
                 else:
                     self.__logger.warning("Receiving and handling of messages by this client will be now stopped "
@@ -679,10 +692,6 @@ class RemootioClient(AsyncClass):
         #         isn't ``aioremootio.enums.State.NO_SENSOR_INSTALLED``
         """
         self.__logger.info("Triggering the device to open/close the gate or garage door...")
-
-        # if self.state != State.NO_SENSOR_INSTALLED:
-        #     raise RemootioClientUnsupportedOperationError(
-        #         self, "TRIGGER action can't be send to the device because it has a sensor installed.")
 
         result: bool = True
 

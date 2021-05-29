@@ -21,6 +21,7 @@ setup(
         "Intended Audience :: Developers",
         "License :: OSI Approved :: Apache Software License",
         "Operating System :: OS Independent",
+        "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3.9",
         "Topic :: Home Automation",
         "Topic :: Software Development :: Libraries"
@@ -28,7 +29,7 @@ setup(
     keywords="remootio, client, library, asynchronous",
     package_dir={"": "src"},
     packages=find_packages(where="src"),
-    python_requires=">=3.9",
+    python_requires=">=3.8",
     install_requires=install_requires,
     project_urls={
         "Bug Tracker": "https://github.com/ivgg-me/aioremootio/issues",
