@@ -16,3 +16,4 @@ from .remootioclient import RemootioClient
 from .listeners import Listener
 from .models import ConnectionOptions, LoggerConfiguration, Event, StateChange, Key
 from .enums import State, EventSource, EventType, KeyType
+from .errors import RemootioError, RemootioClientConnectionEstablishmentError, RemootioClientAuthenticationError

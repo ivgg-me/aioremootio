@@ -40,6 +40,18 @@ class RemootioClientError(RemootioError):
         super().__init__(device, message)
 
 
+class RemootioClientConnectionEstablishmentError(RemootioClientError):
+
+    def __init__(self, device: 'RemootioClient', message: str) -> NoReturn:
+        super().__init__(device, message)
+
+
+class RemootioClientAuthenticationError(RemootioClientError):
+
+    def __init__(self, device: 'RemootioClient', message: str) -> NoReturn:
+        super().__init__(device, message)
+
+
 class RemootioClientDecryptionError(RemootioClientError):
 
     def __init__(self, device: 'RemootioClient', message: str) -> NoReturn:

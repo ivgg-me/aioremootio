@@ -29,6 +29,8 @@ from .listeners import Listener
 from .errors import \
     RemootioError, \
     RemootioClientError, \
+    RemootioClientConnectionEstablishmentError, \
+    RemootioClientAuthenticationError, \
     RemootioClientDecryptionError, \
     RemootioClientEncryptionError, \
     RemootioClientUnsupportedOperationError
@@ -86,7 +88,7 @@ class RemootioClient(AsyncClass):
             event_listener: Optional[Listener[Event]] = None
     ):
         """
-        :param connection_options   :  The options using to connect to the device.
+        :param connection_options   : The options using to connect to the device.
                                       If a dictionary it must contain the device's
                                       IP address with key as defined by the constant
                                       ``aioremootio.constants.CONNECTION_OPTION_KEY_IP_ADDRESS``,
@@ -222,7 +224,8 @@ class RemootioClient(AsyncClass):
                 if handle_connection_error:
                     self.__logger.exception("Unable to establish connection to the device.")
                 else:
-                    raise RemootioClientError(self, "Unable to establish connection to the device.") from ex
+                    raise RemootioClientConnectionEstablishmentError(
+                        self, "Unable to establish connection to the device.") from ex
 
             # Authenticating
             if self.connected and not self.authenticated:
@@ -266,7 +269,7 @@ class RemootioClient(AsyncClass):
             frame_type: FrameType = retrieve_frame_type(frame)
             if frame_type == FrameType.ERROR:
                 frame = ErrorFrame(json=frame)
-                raise RemootioClientError(
+                raise RemootioClientAuthenticationError(
                     self, "An error has been occurred on the device during the authentication. Error [%s]" %
                           frame.error_type)
             elif frame_type == FrameType.ENCRYPTED:
@@ -285,12 +288,17 @@ class RemootioClient(AsyncClass):
                 raise RemootioClientError(self, "Received frame isn't the expected.")
 
             self.__authenticated = True
+        except RemootioClientAuthenticationError as ex:
+            self.__logger.exception(ex.message)
+            self.__session_key = None
+            self.__last_action_id = None
+            raise ex
         except BaseException as ex:
             self.__logger.exception("Unable to authenticate this client by the device because of an error.")
             self.__session_key = None
             self.__last_action_id = None
-            raise RemootioClientError(self, "Unable to authenticate this client by the device because of an error.") \
-                from ex
+            raise RemootioClientAuthenticationError(
+                self, "Unable to authenticate this client by the device because of an error.") from ex
 
     async def __send_frame(self, frame: AbstractJSONHolderFrame, ws: Optional[ClientWebSocketResponse] = None) -> NoReturn:
         if ws is None:

@@ -68,22 +68,29 @@ async def main() -> NoReturn:
     remootio_client: aioremootio.RemootioClient
 
     async with aiohttp.ClientSession() as client_session:
-        remootio_client = \
-            await aioremootio.RemootioClient(
-                connection_options,
-                client_session,
-                aioremootio.LoggerConfiguration(logger=logger),
-                state_change_listener
-            )
-
-        if AD_ACTION not in args or args[AD_ACTION] is None:
-            logger.info("State of the device: %s", remootio_client.state)
-        elif args[AD_ACTION] == AV_ACTION_TRIGGER:
-            await remootio_client.trigger()
-        elif args[AD_ACTION] == AV_ACTION_OPEN:
-            await remootio_client.trigger_open()
-        elif args[AD_ACTION] == AV_ACTION_CLOSE:
-            await remootio_client.trigger_close()
+        try:
+            remootio_client = \
+                await aioremootio.RemootioClient(
+                    connection_options,
+                    client_session,
+                    aioremootio.LoggerConfiguration(logger=logger),
+                    state_change_listener
+                )
+        except aioremootio.RemootioClientConnectionEstablishmentError:
+            logger.exception("Failed to establish connection to the Remootio device.")
+        except aioremootio.RemootioClientAuthenticationError:
+            logger.exception("Failed to authenticate client by the Remootio device.")
+        except aioremootio.RemootioError:
+            logger.exception("Failed to create client because of an error.")
+        else:
+            if AD_ACTION not in args or args[AD_ACTION] is None:
+                logger.info("State of the device: %s", remootio_client.state)
+            elif args[AD_ACTION] == AV_ACTION_TRIGGER:
+                await remootio_client.trigger()
+            elif args[AD_ACTION] == AV_ACTION_OPEN:
+                await remootio_client.trigger_open()
+            elif args[AD_ACTION] == AV_ACTION_CLOSE:
+                await remootio_client.trigger_close()
 
         while True:
             await asyncio.sleep(0.1)
