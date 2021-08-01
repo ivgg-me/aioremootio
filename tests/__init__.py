@@ -30,7 +30,7 @@ def create_remootio_device_configurations(
 ) -> Optional[RemootioDeviceConfiguration]:
     result = None
 
-    filename = "remootio_devices.configuration.json"
+    filename = "remootio_device.configuration.json"
 
     if os.path.isfile(filename):
         try:
@@ -39,6 +39,15 @@ def create_remootio_device_configurations(
         except:
             print("Can't read file. File [%s] Cause [%s]" % (
                 filename,
+                ': '.join(str(exc_info_item) for exc_info_item in sys.exc_info()[:2])
+            ))
+    elif os.path.isfile(os.path.join("..", filename)):
+        try:
+            with open(os.path.join("..", filename), "r") as af:
+                result = RemootioDeviceConfiguration(**json.load(af))
+        except:
+            print("Can't read file. File [%s] Cause [%s]" % (
+                os.path.join("..", filename),
                 ': '.join(str(exc_info_item) for exc_info_item in sys.exc_info()[:2])
             ))
     elif type(default_device_configuration) is dict:

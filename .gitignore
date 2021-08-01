@@ -294,6 +294,6 @@ Thumbs.db #thumbnail cache on Windows
 
 # End of https://www.toptal.com/developers/gitignore/api/pycharm+all,intellij+all,python
 
-remootio_devices.configuration.json
+remootio_device.configuration.json
 venv-*/
 .venv-*/

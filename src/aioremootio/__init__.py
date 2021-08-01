@@ -12,8 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .remootioclient import RemootioClient
-from .listeners import Listener
-from .models import ConnectionOptions, LoggerConfiguration, Event, StateChange, Key
-from .enums import State, EventSource, EventType, KeyType
-from .errors import RemootioError, RemootioClientConnectionEstablishmentError, RemootioClientAuthenticationError
+from .remootioclient import \
+    RemootioClient
+from .listeners import \
+    Listener
+from .models import \
+    ConnectionOptions, \
+    LoggerConfiguration, \
+    Event, \
+    Key, \
+    StateChange
+from .enums import \
+    EventSource, \
+    EventType, \
+    KeyType, \
+    State
+from .errors import \
+    RemootioError, \
+    RemootioClientConnectionEstablishmentError, \
+    RemootioClientAuthenticationError
+from .constants import \
+    CONNECTION_OPTION_KEY_IP_ADDRESS, \
+    CONNECTION_OPTION_KEY_API_SECRET_KEY, \
+    CONNECTION_OPTION_KEY_API_AUTH_KEY

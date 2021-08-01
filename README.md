@@ -13,6 +13,7 @@ This client library supports currently the listening to following kind of events
 * `RELAY_TRIGGER` which is triggered by the device when its control output has been triggered to operate the 
   connected gate or garage door
 * `LEFT_OPEN` which is triggered by the device when the connected gate or garage door has been left open
+* `RESTART` which is triggered by the device when it was restarted
 
 ## Using the library
 
@@ -26,6 +27,7 @@ import aiohttp
 import aioremootio
 
 class ExampleStateListener(aioremootio.Listener[aioremootio.StateChange]):
+
     __logger: logging.Logger
 
     def __init__(self, logger: logging.Logger):
@@ -47,26 +49,34 @@ async def main() -> NoReturn:
     connection_options: aioremootio.ConnectionOptions = \
         aioremootio.ConnectionOptions("192.168.0.1", "API_SECRET_KEY", "API_AUTH_KEY")
 
-    state_change_listener: aioremootio.Listener[aioremootio.StateChange] = ExampleStateListener(logger)
+    state_change_listener: aioremootio.Listener[aioremootio.StateChange] = \
+        ExampleStateListener(logger)
 
     remootio_client: aioremootio.RemootioClient
 
     async with aiohttp.ClientSession() as client_session:
-        remootio_client = \
-            await aioremootio.RemootioClient(
-                connection_options,
-                client_session,
-                aioremootio.LoggerConfiguration(logger=logger),
-                state_change_listener
-            )
-
-        logger.info("State of the device: %s", remootio_client.state)
-        
-        if remootio_client.state == aioremootio.State.NO_SENSOR_INSTALLED:
-            await remootio_client.trigger()
+        try:
+            remootio_client = \
+                await aioremootio.RemootioClient(
+                    connection_options,
+                    client_session,
+                    aioremootio.LoggerConfiguration(logger=logger),
+                    state_change_listener
+                )
+        except aioremootio.RemootioClientConnectionEstablishmentError:
+            logger.exception("The client has failed to establish connection to the Remootio device.")
+        except aioremootio.RemootioClientAuthenticationError:
+            logger.exception("The client has failed to authenticate with the Remootio device.")
+        except aioremootio.RemootioError:
+            logger.exception("Failed to create client because of an error.")
         else:
-            await remootio_client.trigger_open()
-            await remootio_client.trigger_close()            
+            logger.info("State of the device: %s", remootio_client.state)
+            
+            if remootio_client.state == aioremootio.State.NO_SENSOR_INSTALLED:
+                await remootio_client.trigger()
+            else:
+                await remootio_client.trigger_open()
+                await remootio_client.trigger_close()            
 
         while True:
             await asyncio.sleep(0.1)

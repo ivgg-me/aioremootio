@@ -11,8 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-from typing import NoReturn
+from typing import NoReturn, Optional, Any
 import argparse
 import logging
 import asyncio
@@ -27,8 +26,11 @@ AV_ACTION_TRIGGER = "trigger"
 AV_ACTION_OPEN = "open"
 AV_ACTION_CLOSE = "close"
 
+log_state_periodically_task: Optional[asyncio.Task] = None
+
 
 class ExampleStateListener(aioremootio.Listener[aioremootio.StateChange]):
+
     __logger: logging.Logger
 
     def __init__(self, logger: logging.Logger):
@@ -39,9 +41,18 @@ class ExampleStateListener(aioremootio.Listener[aioremootio.StateChange]):
                            (client.ip_address, subject.old_state, subject.new_state))
 
 
+async def log_state_periodically(remootio_client: aioremootio.RemootioClient, period: float, logger: logging.Logger):
+    try:
+        while True:
+            logger.info("Last known state of the device is %s", remootio_client.state)
+            await asyncio.sleep(period)
+    except asyncio.CancelledError:
+        pass
+
+
 async def main() -> NoReturn:
     logger = logging.getLogger(__name__)
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(logging.INFO)
 
     handler: logging.Handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter(fmt="%(asctime)s [%(levelname)s] %(message)s"))
@@ -77,12 +88,14 @@ async def main() -> NoReturn:
                     state_change_listener
                 )
         except aioremootio.RemootioClientConnectionEstablishmentError:
-            logger.exception("Failed to establish connection to the Remootio device.")
+            logger.exception("The client has failed to establish connection to the Remootio device.")
         except aioremootio.RemootioClientAuthenticationError:
-            logger.exception("Failed to authenticate client by the Remootio device.")
+            logger.exception("The client has failed to authenticate with the Remootio device.")
         except aioremootio.RemootioError:
             logger.exception("Failed to create client because of an error.")
         else:
+            log_state_periodically_task = asyncio.create_task(log_state_periodically(remootio_client, 60, logger))
+
             if AD_ACTION not in args or args[AD_ACTION] is None:
                 logger.info("State of the device: %s", remootio_client.state)
             elif args[AD_ACTION] == AV_ACTION_TRIGGER:
@@ -100,4 +113,7 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
+        if log_state_periodically_task is not None:
+            log_state_periodically_task.cancel()
+
         pass

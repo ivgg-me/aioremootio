@@ -12,9 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional, NoReturn, Callable, Awaitable
+from typing import Optional, NoReturn, Callable
 
-from aioremootio.listeners import T
 from aioremootio.models import LoggerConfiguration
 from aioremootio.enums import State
 import unittest
@@ -66,7 +65,7 @@ class RemootioClientTestCase(unittest.TestCase):
         if self.__remootio_device_configuration is not None:
             asyncio.get_event_loop().run_until_complete(self.__test_remootio_device())
         else:
-            logging.info("Tests will be skipped because of missing Remootio device configuration.")
+            self.__logger.warning("Tests will be skipped because of missing Remootio device configuration.")
 
     async def __test_remootio_device(self):
         async with aiohttp.ClientSession() as client_session:
@@ -78,22 +77,18 @@ class RemootioClientTestCase(unittest.TestCase):
                     self.__state_change_listener
                 )
 
-            await asyncio.wait_for(
-                self.__condition_is_met(self.__is_api_version_not_none, remootio_client),
-                timeout=RemootioClientTestCase.TIMEOUT
-            )
+            api_version: int = await asyncio.wait_for(
+                remootio_client.api_version, timeout=RemootioClientTestCase.TIMEOUT)
 
-            self.assertEqual(remootio_client.api_version, self.__remootio_device_configuration.api_version,
+            self.assertEqual(api_version, self.__remootio_device_configuration.api_version,
                              "API version isn't the expected.")
 
-            if remootio_client.api_version >= 2:
-                await asyncio.wait_for(
-                    self.__condition_is_met(self.__is_serial_number_not_none, remootio_client),
-                    timeout=RemootioClientTestCase.TIMEOUT
-                )
+            if api_version >= 2:
+                serial_number: str = await asyncio.wait_for(
+                    remootio_client.serial_number, timeout=RemootioClientTestCase.TIMEOUT)
 
                 self.assertIsNotNone(
-                    remootio_client.serial_number,
+                    serial_number,
                     "By devices with API version >= 2 serial number must be set after successful initialization of "
                     "the client.")
 
@@ -163,12 +158,6 @@ class RemootioClientTestCase(unittest.TestCase):
                 result = False
 
         return result
-
-    def __is_api_version_not_none(self, remootio_client: aioremootio.RemootioClient, **kwargs) -> bool:
-        return remootio_client.api_version is not None
-
-    def __is_serial_number_not_none(self, remootio_client: aioremootio.RemootioClient, **kwargs) -> bool:
-        return remootio_client.serial_number is not None
 
     def __is_state_change_listener_invoked(self, remootio_client: aioremootio.RemootioClient, **kwargs) -> bool:
         return self.__state_change_listener.invoke_count == kwargs["expected_invoke_count"]

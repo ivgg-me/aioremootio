@@ -67,6 +67,7 @@ class EventType(Enum):
     STATE_CHANGE = "StateChange"
     RELAY_TRIGGER = "RelayTrigger"
     LEFT_OPEN = "LeftOpen"
+    RESTART = "Restart"
     UNSUPPORTED = "Unsupported"
 
     @classmethod
@@ -108,6 +109,11 @@ class FrameType(Enum):
     PONG = "PONG"
     ERROR = "ERROR"
     CHALLENGE = "CHALLENGE"
+    UNKNOWN = "UNKNOWN"
+
+    @classmethod
+    def _missing_(cls, value):
+        return FrameType.UNKNOWN
 
 
 class ErrorCode(Enum):
