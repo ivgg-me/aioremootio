@@ -58,12 +58,17 @@ from .constants import \
     CONNECTING_LOCK_DELAY, \
     AUTHENTICATING_LOCK_DELAY, \
     TERMINATING_LOCK_DELAY, \
+    INITIALIZING_LOCK_DELAY, \
     DISCONNECTING_LOCK_DELAY, \
     SAYING_HELLO_LOCK_DELAY, \
     UPDATING_LAST_ACTION_ID_LOCK_DELAY, \
     WAITING_FOR_SAID_HELLO_DELAY, \
     WAITING_FOR_DEVICE_ANSWERED_TO_HELLO_DELAY, \
-    WAITING_FOR_CLIENT_IS_AUTHENTICATED_DELAY
+    WAITING_FOR_CLIENT_IS_AUTHENTICATED_DELAY, \
+    TASK_NAME_PING_SENDER, \
+    TASK_NAME_MESSAGE_RECEIVER_AND_HANDLER, \
+    TASK_STOPPED_DELAY, \
+    TASK_STARTED_DELAY
 
 
 class RemootioClient(AsyncClass):
@@ -94,8 +99,12 @@ class RemootioClient(AsyncClass):
     __device_answered_to_hello: bool
     __terminating_lock: asyncio.Lock
     __terminated: bool
+    __initializing_lock: asyncio.Lock
+    __initialized: bool
     __do_receive_and_handle_messages: bool
+    __receives_and_handles_messages: bool
     __do_send_pings: bool
+    __sends_pings: bool
 
     def __init__(
             self,
@@ -194,8 +203,12 @@ class RemootioClient(AsyncClass):
         self.__device_answered_to_hello = False
         self.__terminating_lock = asyncio.Lock()
         self.__terminated = False
+        self.__initializing_lock = asyncio.Lock()
+        self.__initialized = False
         self.__do_receive_and_handle_messages = True
+        self.__receives_and_handles_messages = False
         self.__do_send_pings = True
+        self.__sends_pings = False
 
     async def __ainit__(self, *args, **kwargs) -> NoReturn:
         await super().__ainit__(*args, **kwargs)
@@ -203,26 +216,40 @@ class RemootioClient(AsyncClass):
         await self.__initialize()
 
     async def __adel__(self) -> None:
-        async with self.__terminating_lock:
-            await self.__terminate()
+        await self.__terminate()
 
-            await super().__adel__()
+        await super().__adel__()
+
+    async def __aenter__(self) -> 'RemootioClient':
+        await self.__initialize()
+
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        self.close()
 
     async def __initialize(self) -> NoReturn:
         self.__logger.info("Initializing this client...")
 
-        try:
-            await self.__invoke_state_listener(StateChange(None, self.state))
+        async with self.__initializing_lock:
+            try:
+                await self.__invoke_state_listener(StateChange(None, self.state))
 
-            await self.__open_connection(handle_connection_error=False)
+                await self.__open_connection(handle_connection_error=False)
 
-            if await self.connected and await self.authenticated:
-                self.create_task(self.__receive_and_handle_messages())
+                if await self.connected and await self.authenticated:
+                    self.create_task(self.__receive_and_handle_messages(), name=TASK_NAME_MESSAGE_RECEIVER_AND_HANDLER)\
+                        .add_done_callback(self.__handle_task_done)
+                    await self.__wait_for_task_started(TASK_NAME_MESSAGE_RECEIVER_AND_HANDLER)
 
-                self.create_task(self.__send_pings())
-        except BaseException as ex:
-            self.__logger.exception("Failed to initialize this client.")
-            raise RemootioClientError(self, "Failed to initialize this client.") from ex
+                    self.create_task(self.__send_pings(), name=TASK_NAME_PING_SENDER) \
+                        .add_done_callback(self.__handle_task_done)
+                    await self.__wait_for_task_started(TASK_NAME_PING_SENDER)
+            except BaseException as ex:
+                self.__logger.exception("Failed to initialize this client.")
+                raise RemootioClientError(self, "Failed to initialize this client.") from ex
+            else:
+                self.__initialized = True
 
     async def __terminate(self) -> NoReturn:
         self.__logger.info("Terminating this client...")
@@ -231,8 +258,11 @@ class RemootioClient(AsyncClass):
             self.__do_receive_and_handle_messages = False
             self.__do_send_pings = False
 
+            await self.__wait_for_task_stopped(TASK_NAME_MESSAGE_RECEIVER_AND_HANDLER)
+            await self.__wait_for_task_stopped(TASK_NAME_PING_SENDER)
             await self.__close_connection()
 
+            self.__initialized = False
             self.__terminated = True
 
     async def __open_connection(self, handle_connection_error: bool = True) -> ClientWebSocketResponse:
@@ -271,12 +301,13 @@ class RemootioClient(AsyncClass):
         await self.__wait_for_authenticating()
 
         async with self.__disconnecting_lock:
-            try:
-                self.__logger.info("Closing connection to the device...")
-                await self.__ws.close()
-            except BaseException:
-                self.__logger.warning("Unable to close connection to the device because of an error.",
-                                      exc_info=(self.__logger.getEffectiveLevel() == logging.DEBUG))
+            if self.__ws is not None and not self.__ws.closed:
+                try:
+                    self.__logger.info("Closing connection to the device...")
+                    await self.__ws.close()
+                except BaseException:
+                    self.__logger.warning("Unable to close connection to the device because of an error.",
+                                          exc_info=(self.__logger.getEffectiveLevel() == logging.DEBUG))
 
             self.__session_key = None
             self.__last_action_id = None
@@ -405,6 +436,8 @@ class RemootioClient(AsyncClass):
         try:
             while True:
                 if not self.__terminating_lock.locked() and self.__do_send_pings:
+                    self.__sends_pings = True
+
                     ws: Optional[ClientWebSocketResponse] = None
                     try:
                         ws = await self.__open_connection()
@@ -438,6 +471,8 @@ class RemootioClient(AsyncClass):
         try:
             while True:
                 if not self.__terminating_lock.locked() and self.__do_receive_and_handle_messages:
+                    self.__receives_and_handles_messages = True
+
                     ws: Optional[ClientWebSocketResponse] = None
                     try:
                         ws = await self.__open_connection()
@@ -504,6 +539,12 @@ class RemootioClient(AsyncClass):
             self.__logger.exception("Receiving and handling of messages by this client will be now stopped"
                                     "because of an error.")
             raise
+
+    def __handle_task_done(self, task: asyncio.Task) -> NoReturn:
+        if task.get_name() == TASK_NAME_MESSAGE_RECEIVER_AND_HANDLER:
+            self.__receives_and_handles_messages = False
+        elif task.get_name() == TASK_NAME_PING_SENDER:
+            self.__sends_pings = False
 
     async def __handle_error_frame(self, frame: ErrorFrame) -> NoReturn:
         self.__logger.debug("Handling received ErrorFrame...")
@@ -841,6 +882,12 @@ class RemootioClient(AsyncClass):
                                 "Waiting until the progress is done.")
             await asyncio.sleep(TERMINATING_LOCK_DELAY)
 
+    async def __wait_for_initializing(self):
+        while self.__initializing_lock.locked():
+            self.__logger.debug("This client does currently initializing. "
+                                "Waiting until the progress is done.")
+            await asyncio.sleep(INITIALIZING_LOCK_DELAY)
+
     async def __wait_for_saying_hello(self):
         while self.__saying_hello_lock.locked():
             self.__logger.debug("This client is currently saying hello to the device. "
@@ -864,6 +911,30 @@ class RemootioClient(AsyncClass):
             self.__logger.debug("This client is currently updating the last action id. "
                                 "Waiting until the progress is done.")
             await asyncio.sleep(UPDATING_LAST_ACTION_ID_LOCK_DELAY)
+
+    async def __wait_for_task_started(self, task_name: str):
+        if task_name == TASK_NAME_MESSAGE_RECEIVER_AND_HANDLER:
+            while not self.__receives_and_handles_messages:
+                self.__logger.debug("Task to receive and handle messages isn't started yet. "
+                                    "Waiting as long as it is started.")
+                await asyncio.sleep(TASK_STARTED_DELAY)
+        elif task_name == TASK_NAME_PING_SENDER:
+            while not self.__sends_pings:
+                self.__logger.debug("Task to sending isn't started yet. "
+                                    "Waiting as long as it is started.")
+                await asyncio.sleep(TASK_STARTED_DELAY)
+
+    async def __wait_for_task_stopped(self, task_name: str):
+        if task_name == TASK_NAME_MESSAGE_RECEIVER_AND_HANDLER:
+            while self.__receives_and_handles_messages:
+                self.__logger.debug("Task to receive and handle messages isn't stopped yet. "
+                                    "Waiting as long as it is stopped.")
+                await asyncio.sleep(TASK_STOPPED_DELAY)
+        elif task_name == TASK_NAME_PING_SENDER:
+            while self.__sends_pings:
+                self.__logger.debug("Task to sending isn't stopped yet. "
+                                    "Waiting as long as it is stopped.")
+                await asyncio.sleep(TASK_STOPPED_DELAY)
 
     async def __trigger(self, action_type: ActionType) -> NoReturn:
         if await self.terminated:
@@ -965,6 +1036,8 @@ class RemootioClient(AsyncClass):
     @property
     async def connected(self) -> bool:
         """
+        Determines whether this client is connected to the device. This mains a WebSocket connection is successfully
+        established to the device.
         :return: ``true`` if this client is connected to the device, otherwise ``false``
         """
 
@@ -976,6 +1049,7 @@ class RemootioClient(AsyncClass):
     @property
     async def authenticated(self) -> bool:
         """
+        Determines whether this client is authenticated on the device.
         :return: ``true`` if this client is authenticated with the device, otherwise ``false``
         """
 
@@ -986,6 +1060,11 @@ class RemootioClient(AsyncClass):
     @property
     async def said_hello(self):
         """
+        Determines whether this client has already said hello during its initialization to the device and the device
+        answered to it. This must be done before sending any action to the device.
+        If any action will be send using this client to the device before the client says hello to the device and the
+        device answers to it, then the sending of the action will be paused as so long as the before described progress
+        isn't done.
         :return: ``true`` if this client has already said hello to the device and the device answered,
                  otherwise ``false``
         """
@@ -997,12 +1076,27 @@ class RemootioClient(AsyncClass):
     @property
     async def terminated(self) -> bool:
         """
+        Determines whether this client is terminated. This mains that background tasks created by this client are
+        stopped and the WebSocket connection to the device is closed.
         :return: ``true`` if this client is terminated, otherwise ``false``
         """
 
         await self.__wait_for_terminating()
 
         return self.__terminated
+
+    @property
+    async def initialized(self) -> bool:
+        """
+        Determines whether this client is initialized. This mains that this client has successfully established a
+        WebSocket connection to the device and is successfully authenticated on it, furthermore that all by the
+        client needed background tasks are created and started.
+        :return: ``true`` if this client is initialized, otherwise ``false``
+        """
+
+        await self.__wait_for_initializing()
+
+        return self.__initialized
 
     @property
     def state(self) -> State:

@@ -93,18 +93,24 @@ To get the _API Secret Key_ and _API Auth Key_ of your [Remootio](https://remoot
 API on it according to the 
 [Remootio Websocket API documentation](https://github.com/remootio/remootio-api-documentation). 
 
-## Running the bundled example
+## Running the bundled examples
 
-The [project source](https://github.com/ivgg-me/aioremootio) does also contain an example.
+The [project source](https://github.com/ivgg-me/aioremootio) does also contain two examples.
 
-To run the bundled example [`example.py`](https://github.com/ivgg-me/aioremootio/blob/master/example.py) you must 
+The example [`example.py`](https://github.com/ivgg-me/aioremootio/blob/master/example.py) demonstrates how you can 
+use the client as a Python object.
+
+The example [`example_acm.py`](https://github.com/ivgg-me/aioremootio/blob/master/example_acm.py) demonstrates how 
+you can use the client as an asynchronous context manager.
+
+To run the bundled examples you must 
 1. also enable the API on your [Remootio](https://remootio.com/) device to get the _API Secret Key_ and _API Auth 
    Key_ of it, and
 2. add the source folder [`/src`](https://github.com/ivgg-me/aioremootio/tree/master/src) of the repository to your 
    `PYTHONPATH`.
 
-After the two steps described above you can run the bundled example `example.py` with the argument `--help` to show the 
-usage information.
+After the two steps described above you can run the bundled examples with the argument `--help` to show 
+the usage information. E.g.:
 
 ```commandline
 python example.py --help
