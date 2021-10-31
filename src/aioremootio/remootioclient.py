@@ -129,9 +129,9 @@ class RemootioClient(AsyncClass):
                                                https://github.com/remootio/remootio-api-documentation.
         :param client_session                : The aiohttp client session to be used by the client.
         :param logger_configuration          : The logger configuration to be used by the client.
-                                               If ``aioremootio.models.LoggerConfiguration.logger`` is set then this
-                                               logger will be used, otherwise an logger instance will by instantiated
-                                               and used.
+                                               If ``aioremootio.models.LoggerConfiguration.logger`` is set then a
+                                               child with suffix ``__name__`` of it will be used, otherwise an logger
+                                               instance will by instantiated and used.
                                                If ``aioremootio.models.LoggerConfiguration.level`` is set then this
                                                level will be used by the internally instantiated logger.
         :param state_change_listener         : An ``aioremootio.listeners.Listener[aioremootio.models.StateChange]``
@@ -172,7 +172,7 @@ class RemootioClient(AsyncClass):
                 else:
                     logger.setLevel(logging.INFO)
             else:
-                logger = logger_configuration.logger
+                logger = logger_configuration.logger.getChild(__name__)
         else:
             logger = logging.getLogger(__name__)
 
