@@ -74,7 +74,7 @@ class RemootioClientTestCase(unittest.TestCase):
                     self.__remootio_device_configuration,
                     client_session,
                     LoggerConfiguration(logger=self.__logger),
-                    self.__state_change_listener
+                    [self.__state_change_listener]
                 )
 
             api_version: int = await asyncio.wait_for(

@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from typing import NoReturn, Optional, Any
+from typing import NoReturn, Optional
 import argparse
 import logging
 import asyncio
@@ -85,7 +85,7 @@ async def main() -> NoReturn:
                     connection_options,
                     client_session,
                     aioremootio.LoggerConfiguration(logger=logger),
-                    state_change_listener
+                    [state_change_listener]
                 )
         except aioremootio.RemootioClientConnectionEstablishmentError:
             logger.exception("The client has failed to establish connection to the Remootio device.")

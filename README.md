@@ -61,7 +61,7 @@ async def main() -> NoReturn:
                     connection_options,
                     client_session,
                     aioremootio.LoggerConfiguration(logger=logger),
-                    state_change_listener
+                    [state_change_listener]
                 )
         except aioremootio.RemootioClientConnectionEstablishmentError:
             logger.exception("The client has failed to establish connection to the Remootio device.")
@@ -134,3 +134,5 @@ to the following template.
 
 Copyright &copy; 2021 Gergö Gabor Ilyes-Veisz. 
 Licensed under the [Apache License, Version 2.0](http://www.apache.org/licenses/LICENSE-2.0)
+
+<a href="https://www.buymeacoffee.com/ivgg" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/default-blue.png" alt="Buy Me A Coffee" height="41" width="174"></a>

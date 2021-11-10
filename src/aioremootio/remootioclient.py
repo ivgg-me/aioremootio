@@ -15,7 +15,7 @@ import asyncio
 import aiohttp
 import logging
 import json
-from typing import Optional, NoReturn, Union
+from typing import Optional, NoReturn, Union, List
 from async_class import AsyncClass
 from aiohttp import ClientWebSocketResponse, WSMsgType
 from base64 import b64encode, b64decode
@@ -68,7 +68,9 @@ from .constants import \
     TASK_NAME_PING_SENDER, \
     TASK_NAME_MESSAGE_RECEIVER_AND_HANDLER, \
     TASK_STOPPED_DELAY, \
-    TASK_STARTED_DELAY
+    TASK_STARTED_DELAY, \
+    ADDING_STATE_CHANGE_LISTENER_LOCK_DELAY, \
+    ADDING_EVENT_LISTENERS_LOCK_DELAY
 
 
 class RemootioClient(AsyncClass):
@@ -79,8 +81,10 @@ class RemootioClient(AsyncClass):
     __connection_options: ConnectionOptions
     __client_session: aiohttp.ClientSession
     __logger: logging.Logger
-    __state_change_listener: Optional[Listener[StateChange]]
-    __event_listener: Optional[Listener[Event]]
+    __state_change_listeners: List[Listener[StateChange]]
+    __adding_state_change_listener_lock: asyncio.Lock
+    __event_listeners: List[Listener[Event]]
+    __adding_event_listener_lock: asyncio.Lock
     __ws: Optional[aiohttp.ClientWebSocketResponse]
     __ip_address: str
     __api_version: Optional[int]
@@ -111,8 +115,8 @@ class RemootioClient(AsyncClass):
             connection_options: Union[ConnectionOptions, dict],
             client_session: aiohttp.ClientSession,
             logger_configuration: Optional[LoggerConfiguration] = None,
-            state_change_listener: Optional[Listener[StateChange]] = None,
-            event_listener: Optional[Listener[Event]] = None
+            state_change_listeners: List[Listener[StateChange]] = [],
+            event_listeners: List[Listener[Event]] = []
     ):
         """
         :param connection_options            : The options using to connect to the device.
@@ -134,10 +138,13 @@ class RemootioClient(AsyncClass):
                                                instance will by instantiated and used.
                                                If ``aioremootio.models.LoggerConfiguration.level`` is set then this
                                                level will be used by the internally instantiated logger.
-        :param state_change_listener         : An ``aioremootio.listeners.Listener[aioremootio.models.StateChange]``
-                                               to be invoked if the state of the device changes.
-        :param event_listener                : An ``aioremootio.listeners.Listener[aioremootio.models.Event]`` to be
-                                               invoked if an by the client supported event occurs on the device.
+        :param state_change_listeners        : A list of
+                                               ``aioremootio.listeners.Listener[aioremootio.models.StateChange]``
+                                               instances to be invoked if the state of the device changes.
+        :param event_listeners               : A list of
+                                               ``aioremootio.listeners.Listener[aioremootio.models.Event]``
+                                               instances to be invoked if an by the client supported event occurs on
+                                               the device.
         """
         super(RemootioClient, self).__init__()
 
@@ -183,8 +190,10 @@ class RemootioClient(AsyncClass):
         self.__connection_options = connection_options
         self.__client_session = client_session
         self.__logger = logger
-        self.__state_change_listener = state_change_listener
-        self.__event_listener = event_listener
+        self.__state_change_listeners = []
+        self.__adding_state_change_listener_lock = asyncio.Lock()
+        self.__event_listeners = []
+        self.__adding_event_listener_lock = asyncio.Lock()
         self.__ws = None
         self.__ip_address = self.__connection_options.ip_address
         self.__api_version = None
@@ -210,6 +219,14 @@ class RemootioClient(AsyncClass):
         self.__do_send_pings = True
         self.__sends_pings = False
 
+        if state_change_listeners is not None:
+            assert None not in state_change_listeners, "List of state change listeners contains invalid elements."
+            self.__state_change_listeners.extend(state_change_listeners)
+
+        if event_listeners is not None:
+            assert None not in event_listeners, "List of state change listeners contains invalid elements."
+            self.__event_listeners.extend(event_listeners)
+
     async def __ainit__(self, *args, **kwargs) -> NoReturn:
         await super().__ainit__(*args, **kwargs)
 
@@ -233,7 +250,7 @@ class RemootioClient(AsyncClass):
 
         async with self.__initializing_lock:
             try:
-                await self.__invoke_state_listener(StateChange(None, self.state))
+                await self.__invoke_state_change_listeners(StateChange(None, self.state))
 
                 await self.__open_connection(handle_connection_error=False)
 
@@ -734,24 +751,36 @@ class RemootioClient(AsyncClass):
         self.__logger.debug("Frame encrypted successfully. Frame [%s] EncryptedFrame [%s]", frame.json, result.json)
         return result
 
-    async def __invoke_state_listener(self, state_change: StateChange) -> NoReturn:
-        if self.__state_change_listener is not None:
-            self.__logger.debug("Invoking state change listener... OldState [%s] NewState [%s]",
+    async def __invoke_state_change_listeners(self, state_change: StateChange) -> NoReturn:
+        await self.__wait_for_adding_state_change_listener()
+
+        state_change_listeners = self.__state_change_listeners[:]
+
+        if len(state_change_listeners) > 0:
+            self.__logger.debug("Invoking state change listeners... OldState [%s] NewState [%s]",
                                 state_change.old_state, state_change.new_state)
-            try:
-                await self.__state_change_listener.execute(self, state_change)
-            except BaseException:
-                self.__logger.warning("An error has been occurred during invoking the state listener.",
-                                      exc_info=True)
+
+            for listener in state_change_listeners:
+                try:
+                    await listener.execute(self, state_change)
+                except BaseException:
+                    self.__logger.warning("An error has been occurred during invoking the state listener.",
+                                          exc_info=True)
 
     async def __invoke_event_listener(self, event: Event) -> NoReturn:
-        if self.__event_listener is not None:
-            self.__logger.debug("Invoking event listener... Event [%s]", event)
-            try:
-                await self.__event_listener.execute(self, event)
-            except BaseException:
-                self.__logger.warning("An error has been occurred during invoking the event listener.",
-                                      exc_info=True)
+        await self.__wait_for_adding_event_listener()
+
+        event_listeners = self.__event_listeners[:]
+
+        if len(event_listeners) > 0:
+            self.__logger.debug("Invoking event listeners... Event [%s]", event)
+
+            for listener in event_listeners:
+                try:
+                    await listener.execute(self, event)
+                except BaseException:
+                    self.__logger.warning("An error has been occurred during invoking the event listener.",
+                                          exc_info=True)
 
     async def __change_state(self, new_state: State) -> NoReturn:
         old_state: State = self.__state
@@ -821,7 +850,7 @@ class RemootioClient(AsyncClass):
                 "Last known state of the device has been changed. OldState [%s] NewState [%s]" %
                 (old_state, self.state))
 
-            await self.__invoke_state_listener(StateChange(old_state, self.state))
+            await self.__invoke_state_change_listeners(StateChange(old_state, self.state))
 
     def __retrieve_session_key(self) -> Union[bytes, bytearray]:
         result = None
@@ -935,6 +964,18 @@ class RemootioClient(AsyncClass):
                 self.__logger.debug("Task to sending isn't stopped yet. "
                                     "Waiting as long as it is stopped.")
                 await asyncio.sleep(TASK_STOPPED_DELAY)
+
+    async def __wait_for_adding_state_change_listener(self):
+        while self.__adding_state_change_listener_lock.locked():
+            self.__logger.debug("A listener will be currently added to the list of state change listeners. "
+                                "Waiting until the progress is done.")
+            await asyncio.sleep(ADDING_STATE_CHANGE_LISTENER_LOCK_DELAY)
+
+    async def __wait_for_adding_event_listener(self):
+        while self.__adding_event_listener_lock.locked():
+            self.__logger.debug("A listener will be currently added to the list of event listeners. "
+                                "Waiting until the progress is done.")
+            await asyncio.sleep(ADDING_EVENT_LISTENERS_LOCK_DELAY)
 
     async def __trigger(self, action_type: ActionType) -> NoReturn:
         if await self.terminated:
@@ -1104,3 +1145,38 @@ class RemootioClient(AsyncClass):
         :return: last known state of the device
         """
         return self.__state
+
+    async def add_state_change_listener(self, state_change_listener: Listener[StateChange]) -> bool:
+        """
+        Adds the given ``aioremootio.listeners.Listener[aioremootio.models.StateChange]`` to the list of listeners to be
+        invoked if the state of the device changes.
+        :param state_change_listener: the ``aioremootio.listeners.Listener[aioremootio.models.StateChange]``
+        :return: ``true`` if the listener was successfully added to the list of listeners, otherwise ``false``
+        """
+
+        result: bool = False
+
+        async with self.__adding_state_change_listener_lock:
+            if state_change_listener is not None and state_change_listener not in self.__state_change_listeners:
+                self.__state_change_listeners.append(state_change_listener)
+                result = True
+
+        return result
+
+    async def add_event_listener(self, event_listener: Listener[Event]) -> bool:
+        """
+        Adds the given ``aioremootio.listeners.Listener[aioremootio.models.Event]`` to the list of listeners to be
+        invoked if an by the client supported event occurs on the device.
+        :param event_listener: the ``aioremootio.listeners.Listener[aioremootio.models.Event]``
+        :return: ``true`` if the listener was successfully added to the list of listeners, otherwise ``false``
+        """
+
+        result: bool = False
+
+        async with self.__adding_event_listener_lock:
+            if event_listener is not None and event_listener not in self.__event_listeners:
+                self.__event_listeners.append(event_listener)
+                result = True
+
+        return result
+
