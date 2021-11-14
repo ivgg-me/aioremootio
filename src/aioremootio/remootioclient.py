@@ -82,9 +82,9 @@ class RemootioClient(AsyncClass):
     __client_session: aiohttp.ClientSession
     __logger: logging.Logger
     __state_change_listeners: List[Listener[StateChange]]
-    __adding_state_change_listener_lock: asyncio.Lock
+    __modifying_state_change_listeners_lock: asyncio.Lock
     __event_listeners: List[Listener[Event]]
-    __adding_event_listener_lock: asyncio.Lock
+    __modifying_event_listeners_lock: asyncio.Lock
     __ws: Optional[aiohttp.ClientWebSocketResponse]
     __ip_address: str
     __api_version: Optional[int]
@@ -191,9 +191,9 @@ class RemootioClient(AsyncClass):
         self.__client_session = client_session
         self.__logger = logger
         self.__state_change_listeners = []
-        self.__adding_state_change_listener_lock = asyncio.Lock()
+        self.__modifying_state_change_listeners_lock = asyncio.Lock()
         self.__event_listeners = []
-        self.__adding_event_listener_lock = asyncio.Lock()
+        self.__modifying_event_listeners_lock = asyncio.Lock()
         self.__ws = None
         self.__ip_address = self.__connection_options.ip_address
         self.__api_version = None
@@ -277,6 +277,8 @@ class RemootioClient(AsyncClass):
 
             await self.__wait_for_task_stopped(TASK_NAME_MESSAGE_RECEIVER_AND_HANDLER)
             await self.__wait_for_task_stopped(TASK_NAME_PING_SENDER)
+            await self.remove_state_change_listeners()
+            await self.remove_event_listeners()
             await self.__close_connection()
 
             self.__initialized = False
@@ -752,7 +754,7 @@ class RemootioClient(AsyncClass):
         return result
 
     async def __invoke_state_change_listeners(self, state_change: StateChange) -> NoReturn:
-        await self.__wait_for_adding_state_change_listener()
+        await self.__wait_for_modifying_state_change_listeners()
 
         state_change_listeners = self.__state_change_listeners[:]
 
@@ -768,7 +770,7 @@ class RemootioClient(AsyncClass):
                                           exc_info=True)
 
     async def __invoke_event_listener(self, event: Event) -> NoReturn:
-        await self.__wait_for_adding_event_listener()
+        await self.__wait_for_modifying_event_listeners()
 
         event_listeners = self.__event_listeners[:]
 
@@ -965,15 +967,15 @@ class RemootioClient(AsyncClass):
                                     "Waiting as long as it is stopped.")
                 await asyncio.sleep(TASK_STOPPED_DELAY)
 
-    async def __wait_for_adding_state_change_listener(self):
-        while self.__adding_state_change_listener_lock.locked():
-            self.__logger.debug("A listener will be currently added to the list of state change listeners. "
+    async def __wait_for_modifying_state_change_listeners(self):
+        while self.__modifying_state_change_listeners_lock.locked():
+            self.__logger.debug("List of state change listeners will be currently modified. "
                                 "Waiting until the progress is done.")
             await asyncio.sleep(ADDING_STATE_CHANGE_LISTENER_LOCK_DELAY)
 
-    async def __wait_for_adding_event_listener(self):
-        while self.__adding_event_listener_lock.locked():
-            self.__logger.debug("A listener will be currently added to the list of event listeners. "
+    async def __wait_for_modifying_event_listeners(self):
+        while self.__modifying_event_listeners_lock.locked():
+            self.__logger.debug("List of event listeners will be currently modified. "
                                 "Waiting until the progress is done.")
             await asyncio.sleep(ADDING_EVENT_LISTENERS_LOCK_DELAY)
 
@@ -1044,6 +1046,16 @@ class RemootioClient(AsyncClass):
         return self.__ip_address
 
     @property
+    async def serial_number(self) -> Optional[str]:
+        """
+        :return: Serial number of the device
+        """
+
+        await self.__wait_for_device_has_answered_to_hello()
+
+        return self.__serial_number
+
+    @property
     async def api_version(self) -> int:
         """
         :return: API version supported by the device
@@ -1054,14 +1066,11 @@ class RemootioClient(AsyncClass):
         return self.__api_version
 
     @property
-    async def serial_number(self) -> Optional[str]:
+    def state(self) -> State:
         """
-        :return: Serial number of the device
+        :return: last known state of the device
         """
-
-        await self.__wait_for_device_has_answered_to_hello()
-
-        return self.__serial_number
+        return self.__state
 
     @property
     async def uptime(self) -> Optional[int]:
@@ -1099,6 +1108,19 @@ class RemootioClient(AsyncClass):
         return self.__authenticated
 
     @property
+    async def initialized(self) -> bool:
+        """
+        Determines whether this client is initialized. This mains that this client has successfully established a
+        WebSocket connection to the device and is successfully authenticated on it, furthermore that all by the
+        client needed background tasks are created and started.
+        :return: ``true`` if this client is initialized, otherwise ``false``
+        """
+
+        await self.__wait_for_initializing()
+
+        return self.__initialized
+
+    @property
     async def said_hello(self):
         """
         Determines whether this client has already said hello during its initialization to the device and the device
@@ -1114,6 +1136,20 @@ class RemootioClient(AsyncClass):
 
         return self.__hello_said and self.__device_answered_to_hello
 
+    async def terminate(self) -> bool:
+        """
+        Terminates this client. After the client is terminated it isn't possible to send any action to the Remootio
+        device via it, furthermore the client doesn't receives and handles any messages sent by the Remootio device.
+        :return: ``true`` if this client was terminated successfully, otherwise ``false``
+        """
+        result: bool = await self.terminated
+
+        if not result:
+            await self.__terminate()
+            result = await self.terminated
+
+        return result
+
     @property
     async def terminated(self) -> bool:
         """
@@ -1126,26 +1162,6 @@ class RemootioClient(AsyncClass):
 
         return self.__terminated
 
-    @property
-    async def initialized(self) -> bool:
-        """
-        Determines whether this client is initialized. This mains that this client has successfully established a
-        WebSocket connection to the device and is successfully authenticated on it, furthermore that all by the
-        client needed background tasks are created and started.
-        :return: ``true`` if this client is initialized, otherwise ``false``
-        """
-
-        await self.__wait_for_initializing()
-
-        return self.__initialized
-
-    @property
-    def state(self) -> State:
-        """
-        :return: last known state of the device
-        """
-        return self.__state
-
     async def add_state_change_listener(self, state_change_listener: Listener[StateChange]) -> bool:
         """
         Adds the given ``aioremootio.listeners.Listener[aioremootio.models.StateChange]`` to the list of listeners to be
@@ -1156,10 +1172,54 @@ class RemootioClient(AsyncClass):
 
         result: bool = False
 
-        async with self.__adding_state_change_listener_lock:
+        async with self.__modifying_state_change_listeners_lock:
             if state_change_listener is not None and state_change_listener not in self.__state_change_listeners:
                 self.__state_change_listeners.append(state_change_listener)
                 result = True
+
+        return result
+
+    async def remove_state_change_listener(self, state_change_listener: Listener[StateChange]) -> bool:
+        """
+        Removes the given ``aioremootio.listeners.Listener[aioremootio.models.StateChange]`` from the list of listeners
+        to be invoked if the state of the device changes.
+        :param state_change_listener: the ``aioremootio.listeners.Listener[aioremootio.models.StateChange]``
+        :return: ``true`` if the listener was successfully removed from the list of listeners, otherwise ``false``
+        """
+
+        result: bool = False
+
+        async with self.__modifying_state_change_listeners_lock:
+            if state_change_listener is not None and state_change_listener in self.__state_change_listeners:
+                self.__state_change_listeners.remove(state_change_listener)
+                result = True
+
+        return result
+
+    def has_state_change_listener(self, state_change_listener: Listener[StateChange]) -> bool:
+        """
+        Determines whether the given ``aioremootio.listeners.Listener[aioremootio.models.StateChange]`` is already
+        in the list of listeners to be invoked if the state of the device changes.
+        :param state_change_listener: the ``aioremootio.listeners.Listener[aioremootio.models.StateChange]``
+        :return: ``true`` if the listener is already in the list of listeners, otherwise ``false``
+        """
+
+        return state_change_listener in self.__state_change_listeners
+
+    async def remove_state_change_listeners(self) -> int:
+        """
+        Removes all ``aioremootio.listeners.Listener[aioremootio.models.StateChange]`` instances from the list of
+        listeners to be invoked if the state of the device changes.
+        :return: number of removed ``aioremootio.listeners.Listener[aioremootio.models.StateChange]`` instances
+        """
+
+        result: int = 0
+
+        if len(self.__state_change_listeners) > 0:
+            result = len(self.__state_change_listeners)
+
+            async with self.__modifying_state_change_listeners_lock:
+                self.__state_change_listeners.clear()
 
         return result
 
@@ -1173,10 +1233,53 @@ class RemootioClient(AsyncClass):
 
         result: bool = False
 
-        async with self.__adding_event_listener_lock:
+        async with self.__modifying_event_listeners_lock:
             if event_listener is not None and event_listener not in self.__event_listeners:
                 self.__event_listeners.append(event_listener)
                 result = True
 
         return result
 
+    async def remove_event_listener(self, event_listener: Listener[Event]) -> bool:
+        """
+        Removes the given ``aioremootio.listeners.Listener[aioremootio.models.Event]`` from the list of listeners
+        to be invoked if an by the client supported event occurs on the device.
+        :param event_listener: the ``aioremootio.listeners.Listener[aioremootio.models.Event]``
+        :return: ``true`` if the listener was successfully removed from the list of listeners, otherwise ``false``
+        """
+
+        result: bool = False
+
+        async with self.__modifying_event_listeners_lock:
+            if event_listener is not None and event_listener in self.__event_listeners:
+                self.__event_listeners.remove(event_listener)
+                result = True
+
+        return result
+
+    def has_event_listener(self, event_listener: Listener[Event]) -> bool:
+        """
+        Determines whether the given ``aioremootio.listeners.Listener[aioremootio.models.Event]`` is already
+        in the list of listeners to be invoked if an by the client supported event occurs on the device.
+        :param state_change_listener: the ``aioremootio.listeners.Listener[aioremootio.models.StateChange]``
+        :return: ``true`` if the listener is already in the list of listeners, otherwise ``false``
+        """
+
+        return event_listener in self.__event_listeners
+
+    async def remove_event_listeners(self) -> int:
+        """
+        Removes all ``aioremootio.listeners.Listener[aioremootio.models.Event]`` instances from the list of
+        listeners to be invoked if an by the client supported event occurs on the device.
+        :return: number of removed ``aioremootio.listeners.Listener[aioremootio.models.Event]`` instances
+        """
+
+        result: int = 0
+
+        if len(self.__event_listeners) > 0:
+            result = len(self.__event_listeners)
+
+            async with self.__modifying_event_listeners_lock:
+                self.__event_listeners.clear()
+
+        return result
