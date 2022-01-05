@@ -23,8 +23,9 @@ class ConnectionOptions:
     """
     Connection options to be used by the client (``aioremootio.RemootioClient``) to connect to the device.
 
-    The hostname (``hostname``) means either the IP address or the hostname that resolves to the IP address of the
-    device.
+    The host (``host``) means either the IP address or the host name that resolves to the IP address of the
+    device. The host name can be one as defined by RFC-1123
+    (https://web.archive.org/web/20211118030256/https://datatracker.ietf.org/doc/html/rfc1123/#page-13).
 
     The API Secret Key (``api_secret_key``) and the API Auth Key (``api_auth_key``) are needed to authenticate the
     client by the device. To get this information for the device, you must enable the API on the device. For more
@@ -32,7 +33,7 @@ class ConnectionOptions:
     https://github.com/remootio/remootio-api-documentation.
     """
 
-    hostname: str
+    host: str
     api_secret_key: str
     api_auth_key: str
 

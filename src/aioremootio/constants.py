@@ -14,16 +14,14 @@
 from voluptuous import Schema, Required, All, Coerce, Match, Upper, REMOVE_EXTRA
 import re
 
-CONNECTION_OPTION_KEY_HOSTNAME = "hostname"
+CONNECTION_OPTION_KEY_HOST = "host"
 CONNECTION_OPTION_KEY_API_SECRET_KEY = "api_secret_key"
 CONNECTION_OPTION_KEY_API_AUTH_KEY = "api_auth_key"
-CONNECTION_OPTION_REGEX_HOSTNAME = re.compile(
+CONNECTION_OPTION_REGEX_HOST = re.compile(
     r"^(" +
     r"(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)" +
     r"|" +
-    r"((?!-)[A-Za-z0-9-]{1,63}(?<!-)\.)+([A-Za-z]{2,6})" +
-    r"|" +
-    r"((?!-)([A-Za-z0-9-]{1,63}(?<!-)))" +
+    r"(([a-zA-Z0-9][a-zA-Z0-9\-]{0,62})(?:\.([a-zA-Z0-9][a-zA-Z0-9\-]{0,62}))*){1,255}" +
     r")$"
 )
 CONNECTION_OPTION_REGEX_CREDENTIAL = re.compile(r"[0-9A-Z]{64}")
@@ -31,10 +29,10 @@ CONNECTION_OPTION_REGEX_API_SECRET_KEY = CONNECTION_OPTION_REGEX_CREDENTIAL
 CONNECTION_OPTION_REGEX_API_AUTH_KEY = CONNECTION_OPTION_REGEX_CREDENTIAL
 CONNECTION_OPTIONS_VOLUPTUOUS_SCHEMA = Schema(
     {
-        Required(CONNECTION_OPTION_KEY_HOSTNAME, msg="Hostname is required"): All(
+        Required(CONNECTION_OPTION_KEY_HOST, msg="Host is required"): All(
             Coerce(str),
-            Match(CONNECTION_OPTION_REGEX_HOSTNAME),
-            msg="Hostname appears to be invalid",
+            Match(CONNECTION_OPTION_REGEX_HOST),
+            msg="Host appears to be invalid",
         ),
         Required(CONNECTION_OPTION_KEY_API_SECRET_KEY, msg="API Secret Key is required"): All(
             Coerce(str),

@@ -34,8 +34,8 @@ class ExampleStateListener(aioremootio.Listener[aioremootio.StateChange]):
         self.__logger = logger
 
     async def execute(self, client: aioremootio.RemootioClient, subject: aioremootio.StateChange) -> NoReturn:
-        self.__logger.info("State of the device has been changed. Hostname [%s] OldState [%s] NewState [%s]" %
-                           (client.hostname, subject.old_state, subject.new_state))
+        self.__logger.info("State of the device has been changed. Host [%s] OldState [%s] NewState [%s]" %
+                           (client.host, subject.old_state, subject.new_state))
 
 
 async def main() -> NoReturn:
@@ -47,40 +47,40 @@ async def main() -> NoReturn:
     logger.addHandler(handler)
 
     connection_options: aioremootio.ConnectionOptions =
-        aioremootio.ConnectionOptions("192.168.0.1", "API_SECRET_KEY", "API_AUTH_KEY")
+    aioremootio.ConnectionOptions("192.168.0.1", "API_SECRET_KEY", "API_AUTH_KEY")
 
-    state_change_listener: aioremootio.Listener[aioremootio.StateChange] =
-        ExampleStateListener(logger)
 
-    remootio_client: aioremootio.RemootioClient
+state_change_listener: aioremootio.Listener[aioremootio.StateChange] =
+ExampleStateListener(logger)
 
-    async with aiohttp.ClientSession() as client_session:
-        try:
-            remootio_client =
-                await aioremootio.RemootioClient(
-                    connection_options,
-                    client_session,
-                    aioremootio.LoggerConfiguration(logger=logger),
-                    [state_change_listener]
-                )
-        except aioremootio.RemootioClientConnectionEstablishmentError:
-            logger.exception("The client has failed to establish connection to the Remootio device.")
-        except aioremootio.RemootioClientAuthenticationError:
-            logger.exception("The client has failed to authenticate with the Remootio device.")
-        except aioremootio.RemootioError:
-            logger.exception("Failed to create client because of an error.")
-        else:
-            logger.info("State of the device: %s", remootio_client.state)
+remootio_client: aioremootio.RemootioClient
 
-            if remootio_client.state == aioremootio.State.NO_SENSOR_INSTALLED:
-                await remootio_client.trigger()
-            else:
-                await remootio_client.trigger_open()
-                await remootio_client.trigger_close()
+async with aiohttp.ClientSession() as client_session:
+    try:
+        remootio_client =
+        await aioremootio.RemootioClient(
+            connection_options,
+            client_session,
+            aioremootio.LoggerConfiguration(logger=logger),
+            [state_change_listener]
+        )
+except aioremootio.RemootioClientConnectionEstablishmentError:
+logger.exception("The client has failed to establish connection to the Remootio device.")
+except aioremootio.RemootioClientAuthenticationError:
+logger.exception("The client has failed to authenticate with the Remootio device.")
+except aioremootio.RemootioError:
+logger.exception("Failed to create client because of an error.")
+else:
+logger.info("State of the device: %s", remootio_client.state)
 
-        while True:
-            await asyncio.sleep(0.1)
+if remootio_client.state == aioremootio.State.NO_SENSOR_INSTALLED:
+    await remootio_client.trigger()
+else:
+    await remootio_client.trigger_open()
+    await remootio_client.trigger_close()
 
+while True:
+    await asyncio.sleep(0.1)
 
 if __name__ == "__main__":
     try:
@@ -123,7 +123,7 @@ to the following template.
 
 ```
 {
-    "hostname": "IP-ADDRESS-OR-HOSTNAME-OF-YOUR-DEVICE",
+    "host": "IP-ADDRESS-OR-HOST-NAME-OF-YOUR-DEVICE",
     "api_secret_key": "API-SECRET-KEY-OF-YOUR-DEVICE",
     "api_auth_key": "API-AUTH-KEY-OF-YOUR-DEVICE",
     "api_version": API-VERSION-OF-YOUR-DEVICE

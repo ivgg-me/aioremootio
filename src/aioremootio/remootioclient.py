@@ -53,7 +53,7 @@ from .enums import State, FrameType, ActionType, EventType, ErrorCode
 from .constants import \
     MESSAGE_HANDLER_HEARTBEAT, \
     PING_SENDER_HEARTBEAT, \
-    CONNECTION_OPTION_KEY_HOSTNAME, \
+    CONNECTION_OPTION_KEY_HOST, \
     CONNECTION_OPTION_KEY_API_AUTH_KEY, \
     CONNECTION_OPTION_KEY_API_SECRET_KEY, \
     CONNECTION_OPTIONS_VOLUPTUOUS_SCHEMA, \
@@ -89,7 +89,7 @@ class RemootioClient(AsyncClass):
     __event_listeners: List[Listener[Event]]
     __modifying_event_listeners_lock: asyncio.Lock
     __ws: Optional[aiohttp.ClientWebSocketResponse]
-    __hostname: str
+    __host: str
     __api_version: Optional[int]
     __serial_number: Optional[str]
     __uptime: Optional[int]
@@ -153,7 +153,7 @@ class RemootioClient(AsyncClass):
 
         if type(connection_options) is dict:
             connection_option_keys = [
-                CONNECTION_OPTION_KEY_HOSTNAME,
+                CONNECTION_OPTION_KEY_HOST,
                 CONNECTION_OPTION_KEY_API_SECRET_KEY,
                 CONNECTION_OPTION_KEY_API_AUTH_KEY
             ]
@@ -163,7 +163,7 @@ class RemootioClient(AsyncClass):
                     raise ValueError(f"Option not defined: {connection_option_key}")
 
             connection_options = ConnectionOptions(
-                connection_options[CONNECTION_OPTION_KEY_HOSTNAME],
+                connection_options[CONNECTION_OPTION_KEY_HOST],
                 connection_options[CONNECTION_OPTION_KEY_API_SECRET_KEY],
                 connection_options[CONNECTION_OPTION_KEY_API_AUTH_KEY]
             )
@@ -198,7 +198,7 @@ class RemootioClient(AsyncClass):
         self.__event_listeners = []
         self.__modifying_event_listeners_lock = asyncio.Lock()
         self.__ws = None
-        self.__hostname = self.__connection_options.hostname
+        self.__host = self.__connection_options.host
         self.__api_version = None
         self.__serial_number = None
         self.__uptime = None
@@ -236,17 +236,17 @@ class RemootioClient(AsyncClass):
             self.__event_listeners.extend(event_listeners)
 
     def __repr__(self) -> str:
-        return "%s{hostname:%s,serial_number:%s,api_version:%s,state:%s}" % (
+        return "%s{host:%s,serial_number:%s,api_version:%s,state:%s}" % (
             self.__class__.__name__,
-            self.__hostname if self.__hostname is not None else "N/A",
+            self.__host if self.__host is not None else "N/A",
             self.__serial_number if self.__serial_number is not None else "N/A",
             self.__api_version if self.__api_version is not None else "N/A",
             self.__state if self.__state is not None else "N/A"
         )
 
     def __str__(self) -> str:
-        return "Hostname [%s] SerialNumber [%s] ApiVersion [%s] State [%s]" % (
-            self.__hostname if self.__hostname is not None else "N/A",
+        return "Host [%s] SerialNumber [%s] ApiVersion [%s] State [%s]" % (
+            self.__host if self.__host is not None else "N/A",
             self.__serial_number if self.__serial_number is not None else "N/A",
             self.__api_version if self.__api_version is not None else "N/A",
             self.__state if self.__state is not None else "N/A"
@@ -322,7 +322,7 @@ class RemootioClient(AsyncClass):
                 self.__logger.info("Establishing connection to the device...")
                 try:
                     self.__ws = await self.__client_session.ws_connect(
-                        f"ws://{self.__connection_options.hostname}:8080/")
+                        f"ws://{self.__connection_options.host}:8080/")
                     self.__logger.info("Connection to the device has been established successfully.")
                 except BaseException as ex:
                     self.__ws = None
@@ -1064,11 +1064,11 @@ class RemootioClient(AsyncClass):
         await self.__trigger(ActionType.QUERY)
 
     @property
-    def hostname(self) -> str:
+    def host(self) -> str:
         """
-        :return: IP address or hostname of the device
+        :return: IP address or host name of the device
         """
-        return self.__hostname
+        return self.__host
 
     @property
     async def serial_number(self) -> Optional[str]:
