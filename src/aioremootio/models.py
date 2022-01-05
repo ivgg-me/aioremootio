@@ -23,13 +23,16 @@ class ConnectionOptions:
     """
     Connection options to be used by the client (``aioremootio.RemootioClient``) to connect to the device.
 
+    The hostname (``hostname``) means either the IP address or the hostname that resolves to the IP address of the
+    device.
+
     The API Secret Key (``api_secret_key``) and the API Auth Key (``api_auth_key``) are needed to authenticate the
     client by the device. To get this information for the device, you must enable the API on the device. For more
     information please consult the Remootio Websocket API documentation at
     https://github.com/remootio/remootio-api-documentation.
     """
 
-    ip_address: str
+    hostname: str
     api_secret_key: str
     api_auth_key: str
 

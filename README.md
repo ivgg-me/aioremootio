@@ -26,16 +26,16 @@ import asyncio
 import aiohttp
 import aioremootio
 
-class ExampleStateListener(aioremootio.Listener[aioremootio.StateChange]):
 
+class ExampleStateListener(aioremootio.Listener[aioremootio.StateChange]):
     __logger: logging.Logger
 
     def __init__(self, logger: logging.Logger):
         self.__logger = logger
 
     async def execute(self, client: aioremootio.RemootioClient, subject: aioremootio.StateChange) -> NoReturn:
-        self.__logger.info("State of the device has been changed. IPAddress [%s] OldState [%s] NewState [%s]" %
-                           (client.ip_address, subject.old_state, subject.new_state))
+        self.__logger.info("State of the device has been changed. Hostname [%s] OldState [%s] NewState [%s]" %
+                           (client.hostname, subject.old_state, subject.new_state))
 
 
 async def main() -> NoReturn:
@@ -45,18 +45,18 @@ async def main() -> NoReturn:
     handler: logging.Handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter(fmt="%(asctime)s [%(levelname)s] %(message)s"))
     logger.addHandler(handler)
-    
-    connection_options: aioremootio.ConnectionOptions = \
+
+    connection_options: aioremootio.ConnectionOptions =
         aioremootio.ConnectionOptions("192.168.0.1", "API_SECRET_KEY", "API_AUTH_KEY")
 
-    state_change_listener: aioremootio.Listener[aioremootio.StateChange] = \
+    state_change_listener: aioremootio.Listener[aioremootio.StateChange] =
         ExampleStateListener(logger)
 
     remootio_client: aioremootio.RemootioClient
 
     async with aiohttp.ClientSession() as client_session:
         try:
-            remootio_client = \
+            remootio_client =
                 await aioremootio.RemootioClient(
                     connection_options,
                     client_session,
@@ -71,12 +71,12 @@ async def main() -> NoReturn:
             logger.exception("Failed to create client because of an error.")
         else:
             logger.info("State of the device: %s", remootio_client.state)
-            
+
             if remootio_client.state == aioremootio.State.NO_SENSOR_INSTALLED:
                 await remootio_client.trigger()
             else:
                 await remootio_client.trigger_open()
-                await remootio_client.trigger_close()            
+                await remootio_client.trigger_close()
 
         while True:
             await asyncio.sleep(0.1)
@@ -123,7 +123,7 @@ to the following template.
 
 ```
 {
-    "ip_address": "IP-ADDRESS-OF-YOUR-DEVICE",
+    "hostname": "IP-ADDRESS-OR-HOSTNAME-OF-YOUR-DEVICE",
     "api_secret_key": "API-SECRET-KEY-OF-YOUR-DEVICE",
     "api_auth_key": "API-AUTH-KEY-OF-YOUR-DEVICE",
     "api_version": API-VERSION-OF-YOUR-DEVICE

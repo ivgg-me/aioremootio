@@ -19,6 +19,7 @@ from typing import Optional, NoReturn, Union, List
 from async_class import AsyncClass
 from aiohttp import ClientWebSocketResponse, WSMsgType
 from base64 import b64encode, b64decode
+from voluptuous import Invalid, MultipleInvalid
 from asyncio.exceptions import CancelledError
 from Crypto.Hash import HMAC, SHA256
 from Crypto.Cipher import AES
@@ -32,7 +33,8 @@ from .errors import \
     RemootioClientAuthenticationError, \
     RemootioClientDecryptionError, \
     RemootioClientEncryptionError, \
-    RemootioClientUnsupportedOperationError
+    RemootioClientUnsupportedOperationError, \
+    RemootioClientInvalidConfigurationError
 from .models import ConnectionOptions, LoggerConfiguration, Event, StateChange
 from .frames import \
     ActionRequestFrame, \
@@ -51,9 +53,10 @@ from .enums import State, FrameType, ActionType, EventType, ErrorCode
 from .constants import \
     MESSAGE_HANDLER_HEARTBEAT, \
     PING_SENDER_HEARTBEAT, \
-    CONNECTION_OPTION_KEY_IP_ADDRESS, \
+    CONNECTION_OPTION_KEY_HOSTNAME, \
     CONNECTION_OPTION_KEY_API_AUTH_KEY, \
     CONNECTION_OPTION_KEY_API_SECRET_KEY, \
+    CONNECTION_OPTIONS_VOLUPTUOUS_SCHEMA, \
     ENCODING, \
     CONNECTING_LOCK_DELAY, \
     AUTHENTICATING_LOCK_DELAY, \
@@ -86,7 +89,7 @@ class RemootioClient(AsyncClass):
     __event_listeners: List[Listener[Event]]
     __modifying_event_listeners_lock: asyncio.Lock
     __ws: Optional[aiohttp.ClientWebSocketResponse]
-    __ip_address: str
+    __hostname: str
     __api_version: Optional[int]
     __serial_number: Optional[str]
     __uptime: Optional[int]
@@ -120,9 +123,9 @@ class RemootioClient(AsyncClass):
     ):
         """
         :param connection_options            : The options using to connect to the device.
-                                               If a dictionary it must contain the device's IP address with key as
-                                               defined by the constant
-                                               ``aioremootio.constants.CONNECTION_OPTION_KEY_IP_ADDRESS``,
+                                               If a dictionary it must contain the device's IP address or hostname with
+                                               key as defined by the constant
+                                               ``aioremootio.constants.CONNECTION_OPTION_KEY_HOSTNAME``,
                                                the device's API Secret Key with key as defined by the constant
                                                ``aioremootio.constants.CONNECTION_OPTION_KEY_API_SECRET_KEY`` and
                                                the device's API Auth Key with key as defined by the constant
@@ -150,7 +153,7 @@ class RemootioClient(AsyncClass):
 
         if type(connection_options) is dict:
             connection_option_keys = [
-                CONNECTION_OPTION_KEY_IP_ADDRESS,
+                CONNECTION_OPTION_KEY_HOSTNAME,
                 CONNECTION_OPTION_KEY_API_SECRET_KEY,
                 CONNECTION_OPTION_KEY_API_AUTH_KEY
             ]
@@ -160,7 +163,7 @@ class RemootioClient(AsyncClass):
                     raise ValueError(f"Option not defined: {connection_option_key}")
 
             connection_options = ConnectionOptions(
-                connection_options[CONNECTION_OPTION_KEY_IP_ADDRESS],
+                connection_options[CONNECTION_OPTION_KEY_HOSTNAME],
                 connection_options[CONNECTION_OPTION_KEY_API_SECRET_KEY],
                 connection_options[CONNECTION_OPTION_KEY_API_AUTH_KEY]
             )
@@ -195,7 +198,7 @@ class RemootioClient(AsyncClass):
         self.__event_listeners = []
         self.__modifying_event_listeners_lock = asyncio.Lock()
         self.__ws = None
-        self.__ip_address = self.__connection_options.ip_address
+        self.__hostname = self.__connection_options.hostname
         self.__api_version = None
         self.__serial_number = None
         self.__uptime = None
@@ -219,6 +222,11 @@ class RemootioClient(AsyncClass):
         self.__do_send_pings = True
         self.__sends_pings = False
 
+        try:
+            CONNECTION_OPTIONS_VOLUPTUOUS_SCHEMA(connection_options.__dict__)
+        except Invalid as e:
+            raise RemootioClientInvalidConfigurationError(self, e) from e
+
         if state_change_listeners is not None:
             assert None not in state_change_listeners, "List of state change listeners contains invalid elements."
             self.__state_change_listeners.extend(state_change_listeners)
@@ -226,6 +234,23 @@ class RemootioClient(AsyncClass):
         if event_listeners is not None:
             assert None not in event_listeners, "List of state change listeners contains invalid elements."
             self.__event_listeners.extend(event_listeners)
+
+    def __repr__(self) -> str:
+        return "%s{hostname:%s,serial_number:%s,api_version:%s,state:%s}" % (
+            self.__class__.__name__,
+            self.__hostname if self.__hostname is not None else "N/A",
+            self.__serial_number if self.__serial_number is not None else "N/A",
+            self.__api_version if self.__api_version is not None else "N/A",
+            self.__state if self.__state is not None else "N/A"
+        )
+
+    def __str__(self) -> str:
+        return "Hostname [%s] SerialNumber [%s] ApiVersion [%s] State [%s]" % (
+            self.__hostname if self.__hostname is not None else "N/A",
+            self.__serial_number if self.__serial_number is not None else "N/A",
+            self.__api_version if self.__api_version is not None else "N/A",
+            self.__state if self.__state is not None else "N/A"
+        )
 
     async def __ainit__(self, *args, **kwargs) -> NoReturn:
         await super().__ainit__(*args, **kwargs)
@@ -297,7 +322,7 @@ class RemootioClient(AsyncClass):
                 self.__logger.info("Establishing connection to the device...")
                 try:
                     self.__ws = await self.__client_session.ws_connect(
-                        f"ws://{self.__connection_options.ip_address}:8080/")
+                        f"ws://{self.__connection_options.hostname}:8080/")
                     self.__logger.info("Connection to the device has been established successfully.")
                 except BaseException as ex:
                     self.__ws = None
@@ -1039,11 +1064,11 @@ class RemootioClient(AsyncClass):
         await self.__trigger(ActionType.QUERY)
 
     @property
-    def ip_address(self) -> str:
+    def hostname(self) -> str:
         """
-        :return: IP address of the device
+        :return: IP address or hostname of the device
         """
-        return self.__ip_address
+        return self.__hostname
 
     @property
     async def serial_number(self) -> Optional[str]:

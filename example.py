@@ -18,7 +18,7 @@ import asyncio
 import aiohttp
 import aioremootio
 
-AD_IP_ADDRESS = "ip_address"
+AD_HOSTNAME = "hostname"
 AD_API_SECRET_KEY = "api_secret_key"
 AD_API_AUTH_KEY = "api_auth_key"
 AD_ACTION = "action"
@@ -37,8 +37,8 @@ class ExampleStateListener(aioremootio.Listener[aioremootio.StateChange]):
         self.__logger = logger
 
     async def execute(self, client: aioremootio.RemootioClient, subject: aioremootio.StateChange) -> NoReturn:
-        self.__logger.info("State of the device has been changed. IPAddress [%s] OldState [%s] NewState [%s]" %
-                           (client.ip_address, subject.old_state, subject.new_state))
+        self.__logger.info("State of the device has been changed. Hostname [%s] OldState [%s] NewState [%s]" %
+                           (client.hostname, subject.old_state, subject.new_state))
 
 
 async def log_state_periodically(remootio_client: aioremootio.RemootioClient, period: float, logger: logging.Logger):
@@ -59,8 +59,8 @@ async def main() -> NoReturn:
     logger.addHandler(handler)
 
     parser: argparse.ArgumentParser = argparse.ArgumentParser("python %s" % __file__)
-    parser.add_argument("--ipAddress", required=True, type=str, dest=AD_IP_ADDRESS,
-                        help="IP address of the device to connect to")
+    parser.add_argument("--hostname", required=True, type=str, dest=AD_HOSTNAME,
+                        help="IP address or hostname (that resolves to the IP address) of the device to connect to")
     parser.add_argument("--apiSecretKey", required=True, type=str, dest=AD_API_SECRET_KEY,
                         help="API Secret Key for the API access")
     parser.add_argument("--apiAuthKey", required=True, type=str, dest=AD_API_AUTH_KEY,
@@ -72,7 +72,7 @@ async def main() -> NoReturn:
     args: dict = vars(parser.parse_args())
 
     connection_options: aioremootio.ConnectionOptions = \
-        aioremootio.ConnectionOptions(args[AD_IP_ADDRESS], args[AD_API_SECRET_KEY], args[AD_API_AUTH_KEY])
+        aioremootio.ConnectionOptions(args[AD_HOSTNAME], args[AD_API_SECRET_KEY], args[AD_API_AUTH_KEY])
 
     state_change_listener: aioremootio.Listener[aioremootio.StateChange] = ExampleStateListener(logger)
 

@@ -32,6 +32,7 @@ from .errors import \
     RemootioClientConnectionEstablishmentError, \
     RemootioClientAuthenticationError
 from .constants import \
-    CONNECTION_OPTION_KEY_IP_ADDRESS, \
+    CONNECTION_OPTION_KEY_HOSTNAME, \
     CONNECTION_OPTION_KEY_API_SECRET_KEY, \
-    CONNECTION_OPTION_KEY_API_AUTH_KEY
+    CONNECTION_OPTION_KEY_API_AUTH_KEY, \
+    CONNECTION_OPTIONS_VOLUPTUOUS_SCHEMA
