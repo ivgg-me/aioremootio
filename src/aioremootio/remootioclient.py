@@ -16,10 +16,10 @@ import aiohttp
 import logging
 import json
 from typing import Optional, NoReturn, Union, List
-from async_class import AsyncClass
+from async_class import AsyncClass, TaskStore
 from aiohttp import ClientWebSocketResponse, WSMsgType
 from base64 import b64encode, b64decode
-from voluptuous import Invalid, MultipleInvalid
+from voluptuous import Invalid
 from asyncio.exceptions import CancelledError
 from Crypto.Hash import HMAC, SHA256
 from Crypto.Cipher import AES
@@ -112,6 +112,7 @@ class RemootioClient(AsyncClass):
     __receives_and_handles_messages: bool
     __do_send_pings: bool
     __sends_pings: bool
+    __task_store: TaskStore
 
     def __init__(
             self,
@@ -221,6 +222,7 @@ class RemootioClient(AsyncClass):
         self.__receives_and_handles_messages = False
         self.__do_send_pings = True
         self.__sends_pings = False
+        self.__task_store = TaskStore(self.loop)
 
         try:
             CONNECTION_OPTIONS_VOLUPTUOUS_SCHEMA(connection_options.__dict__)
@@ -258,17 +260,17 @@ class RemootioClient(AsyncClass):
         await self.__initialize()
 
     async def __adel__(self) -> None:
+        await self.__task_store.close()
         await self.__terminate()
-
-        await super().__adel__()
 
     async def __aenter__(self) -> 'RemootioClient':
         await self.__initialize()
-
+        
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        self.close()
+        await self.__task_store.close()
+        await self.__terminate()
 
     async def __initialize(self) -> NoReturn:
         self.__logger.info("Initializing this client...")
@@ -280,11 +282,13 @@ class RemootioClient(AsyncClass):
                 await self.__open_connection(handle_connection_error=False)
 
                 if await self.connected and await self.authenticated:
-                    self.create_task(self.__receive_and_handle_messages(), name=TASK_NAME_MESSAGE_RECEIVER_AND_HANDLER)\
+                    self.__task_store\
+                        .create_task(self.__receive_and_handle_messages(), name=TASK_NAME_MESSAGE_RECEIVER_AND_HANDLER)\
                         .add_done_callback(self.__handle_task_done)
                     await self.__wait_for_task_started(TASK_NAME_MESSAGE_RECEIVER_AND_HANDLER)
 
-                    self.create_task(self.__send_pings(), name=TASK_NAME_PING_SENDER) \
+                    self.__task_store\
+                        .create_task(self.__send_pings(), name=TASK_NAME_PING_SENDER) \
                         .add_done_callback(self.__handle_task_done)
                     await self.__wait_for_task_started(TASK_NAME_PING_SENDER)
             except BaseException as ex:
@@ -1286,7 +1290,7 @@ class RemootioClient(AsyncClass):
         """
         Determines whether the given ``aioremootio.listeners.Listener[aioremootio.models.Event]`` is already
         in the list of listeners to be invoked if an by the client supported event occurs on the device.
-        :param state_change_listener: the ``aioremootio.listeners.Listener[aioremootio.models.StateChange]``
+        :param event_listener: the ``aioremootio.listeners.Listener[aioremootio.models.StateChange]``
         :return: ``true`` if the listener is already in the list of listeners, otherwise ``false``
         """
 
