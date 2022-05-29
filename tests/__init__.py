@@ -22,7 +22,7 @@ import sys
 
 @dataclass(frozen=True)
 class RemootioDeviceConfiguration(ConnectionOptions):
-    api_version: int
+    api_version: int = 3
 
 
 def create_remootio_device_configurations(

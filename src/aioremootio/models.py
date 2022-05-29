@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import Optional
 from logging import Logger
 from .enums import KeyType, EventType, EventSource, State
+from .constants import CONNECTION_OPTION_DEFAULT_VALUE_CONNECT_AUTOMATICALLY
 
 
 @dataclass(frozen=True)
@@ -31,11 +32,15 @@ class ConnectionOptions:
     client by the device. To get this information for the device, you must enable the API on the device. For more
     information please consult the Remootio Websocket API documentation at
     https://github.com/remootio/remootio-api-documentation.
+
+    The flag ``connect_automatically`` controls whether the client should establish a connection to the device during
+    its initialization or not. The initialization will be automatically done right after its construction.
     """
 
     host: str
     api_secret_key: str
     api_auth_key: str
+    connect_automatically: bool = CONNECTION_OPTION_DEFAULT_VALUE_CONNECT_AUTOMATICALLY
 
 
 @dataclass(frozen=True)

@@ -46,41 +46,38 @@ async def main() -> NoReturn:
     handler.setFormatter(logging.Formatter(fmt="%(asctime)s [%(levelname)s] %(message)s"))
     logger.addHandler(handler)
 
-    connection_options: aioremootio.ConnectionOptions =
-    aioremootio.ConnectionOptions("192.168.0.1", "API_SECRET_KEY", "API_AUTH_KEY")
+    connection_options: aioremootio.ConnectionOptions = \
+        aioremootio.ConnectionOptions("192.168.0.1", "API_SECRET_KEY", "API_AUTH_KEY")
 
+    state_change_listener: aioremootio.Listener[aioremootio.StateChange] = ExampleStateListener(logger)
 
-state_change_listener: aioremootio.Listener[aioremootio.StateChange] =
-ExampleStateListener(logger)
-
-remootio_client: aioremootio.RemootioClient
-
-async with aiohttp.ClientSession() as client_session:
-    try:
-        remootio_client =
-        await aioremootio.RemootioClient(
-            connection_options,
-            client_session,
-            aioremootio.LoggerConfiguration(logger=logger),
-            [state_change_listener]
-        )
-except aioremootio.RemootioClientConnectionEstablishmentError:
-logger.exception("The client has failed to establish connection to the Remootio device.")
-except aioremootio.RemootioClientAuthenticationError:
-logger.exception("The client has failed to authenticate with the Remootio device.")
-except aioremootio.RemootioError:
-logger.exception("Failed to create client because of an error.")
-else:
-logger.info("State of the device: %s", remootio_client.state)
-
-if remootio_client.state == aioremootio.State.NO_SENSOR_INSTALLED:
-    await remootio_client.trigger()
-else:
-    await remootio_client.trigger_open()
-    await remootio_client.trigger_close()
-
-while True:
-    await asyncio.sleep(0.1)
+    remootio_client: aioremootio.RemootioClient
+    
+    async with aiohttp.ClientSession() as client_session:
+        try:
+            remootio_client = await aioremootio.RemootioClient(
+                connection_options,
+                client_session,
+                aioremootio.LoggerConfiguration(logger=logger),
+                [state_change_listener]
+            )
+        except aioremootio.RemootioClientConnectionEstablishmentError:
+            logger.exception("The client has failed to establish connection to the Remootio device.")
+        except aioremootio.RemootioClientAuthenticationError:
+            logger.exception("The client has failed to authenticate with the Remootio device.")
+        except aioremootio.RemootioError:
+            logger.exception("Failed to create client because of an error.")
+        else:
+            logger.info("State of the device: %s", remootio_client.state)
+    
+            if remootio_client.state == aioremootio.State.NO_SENSOR_INSTALLED:
+                await remootio_client.trigger()
+            else:
+                await remootio_client.trigger_open()
+                await remootio_client.trigger_close()
+    
+        while True:
+            await asyncio.sleep(0.1)
 
 if __name__ == "__main__":
     try:
@@ -99,6 +96,10 @@ The [project source](https://github.com/ivgg-me/aioremootio) does also contain t
 
 The example [`example.py`](https://github.com/ivgg-me/aioremootio/blob/master/example.py) demonstrates how you can 
 use the client as a Python object.
+
+The example [`example_mc.py`](https://github.com/ivgg-me/aioremootio/blob/master/example_mc.py) demonstrates how you can
+use the client as a Python object where it does not establish a connection to the Remootio device automatically 
+during its initialization.
 
 The example [`example_acm.py`](https://github.com/ivgg-me/aioremootio/blob/master/example_acm.py) demonstrates how 
 you can use the client as an asynchronous context manager.
