@@ -69,6 +69,10 @@ class EventType(Enum):
     LEFT_OPEN = "LeftOpen"
     RESTART = "Restart"
     UNSUPPORTED = "Unsupported"
+    CONNECTED = "connected"
+    DISCONNECTED = "disconnected"
+    TASKS_STARTED = "tasks_started"
+    TASKS_STOPPED = "tasks_stopped"
 
     @classmethod
     def _missing_(cls, value):
@@ -133,12 +137,13 @@ class EventSource(Enum):
     ``aioremootio.models.Event``.
     """
 
-    BLUETOOTH = "bluetooth"
-    WIFI = "wifi"
-    INTERNET = "internet"
-    AUTOOPEN = "autoopen"
+    DEVICE_OVER_BLUETOOTH = "bluetooth"
+    DEVICE_OVER_WIFI = "wifi"
+    DEVICE_OVER_INTERNET = "internet"
+    DEVICE_VIA_AUTOOPEN_FEATURE = "autoopen"
     UNKNOWN = "unknown"
     NONE = "none"
+    CLIENT = "client"
 
     @classmethod
     def _missing_(cls, value):

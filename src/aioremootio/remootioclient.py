@@ -11,6 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
 import asyncio
 import aiohttp
 import logging
@@ -49,70 +51,80 @@ from .frames import \
     AbstractFrame, \
     ensure_frame_type, \
     retrieve_frame_type, AbstractJSONHolderFrame, PingFrame
-from .enums import State, FrameType, ActionType, EventType, ErrorCode
+from .enums import State, FrameType, ActionType, EventType, ErrorCode, ErrorType, EventSource
 from .constants import \
     MESSAGE_HANDLER_HEARTBEAT, \
     PING_SENDER_HEARTBEAT, \
     CONNECTION_OPTION_KEY_HOST, \
     CONNECTION_OPTION_KEY_API_AUTH_KEY, \
     CONNECTION_OPTION_KEY_API_SECRET_KEY, \
+    CONNECTION_OPTION_KEY_CONNECT_AUTOMATICALLY, \
     CONNECTION_OPTIONS_VOLUPTUOUS_SCHEMA, \
+    CONNECTION_OPTION_DEFAULT_VALUE_CONNECT_AUTOMATICALLY, \
     ENCODING, \
-    CONNECTING_LOCK_DELAY, \
-    AUTHENTICATING_LOCK_DELAY, \
-    TERMINATING_LOCK_DELAY, \
-    INITIALIZING_LOCK_DELAY, \
-    DISCONNECTING_LOCK_DELAY, \
-    SAYING_HELLO_LOCK_DELAY, \
+    LIFECYCLE_LOCK_DELAY, \
     UPDATING_LAST_ACTION_ID_LOCK_DELAY, \
     WAITING_FOR_SAID_HELLO_DELAY, \
     WAITING_FOR_DEVICE_ANSWERED_TO_HELLO_DELAY, \
-    WAITING_FOR_CLIENT_IS_AUTHENTICATED_DELAY, \
     TASK_NAME_PING_SENDER, \
     TASK_NAME_MESSAGE_RECEIVER_AND_HANDLER, \
+    TASK_NAME_CONNECTOR, \
+    TASK_NAME_DISCONNECTOR, \
     TASK_STOPPED_DELAY, \
     TASK_STARTED_DELAY, \
+    TASK_STOPPED_TIMEOUT, \
     ADDING_STATE_CHANGE_LISTENER_LOCK_DELAY, \
     ADDING_EVENT_LISTENERS_LOCK_DELAY
 
 
 class RemootioClient(AsyncClass):
     """
-    Class wich represents an Websocket API client of an Remootio device.
+    Class wich represents a Websocket API client of a Remootio device.
     """
 
-    __connection_options: ConnectionOptions
-    __client_session: aiohttp.ClientSession
     __logger: logging.Logger
-    __state_change_listeners: List[Listener[StateChange]]
-    __modifying_state_change_listeners_lock: asyncio.Lock
-    __event_listeners: List[Listener[Event]]
-    __modifying_event_listeners_lock: asyncio.Lock
-    __ws: Optional[aiohttp.ClientWebSocketResponse]
+    __connection_options: ConnectionOptions
     __host: str
     __api_version: Optional[int]
     __serial_number: Optional[str]
     __uptime: Optional[int]
     __state: State
-    __session_key: Optional[str]
     __updating_last_action_id_lock: asyncio.Lock
     __last_action_id: Optional[int]
-    __connecting_lock: asyncio.Lock
-    __disconnecting_lock: asyncio.Lock
-    __authenticating_lock: asyncio.Lock
+    __authenticating: bool
     __authenticated: bool
-    __saying_hello_lock: asyncio.Lock
-    __hello_said: bool
+    __saying_hello: bool
+    __said_hello: bool
     __device_answered_to_hello: bool
-    __terminating_lock: asyncio.Lock
-    __terminated: bool
-    __initializing_lock: asyncio.Lock
+
+    # Lifecycle
+    __lifecycle: asyncio.Condition
+    __initializing: bool
     __initialized: bool
+    __connecting: bool
+    __disconnecting: bool
+    __terminating: bool
+    __terminated: bool
+
+    # Websocket
+    __client_session: aiohttp.ClientSession
+    __ws: Optional[aiohttp.ClientWebSocketResponse]
+    __session_key: Optional[str]
+
+    # Tasks
+    __task_store: TaskStore
     __do_receive_and_handle_messages: bool
     __receives_and_handles_messages: bool
     __do_send_pings: bool
     __sends_pings: bool
-    __task_store: TaskStore
+
+    # State change listeners
+    __state_change_listeners: List[Listener[StateChange]]
+    __modifying_state_change_listeners_lock: asyncio.Lock
+
+    # Event listeners
+    __event_listeners: List[Listener[Event]]
+    __modifying_event_listeners_lock: asyncio.Lock
 
     def __init__(
             self,
@@ -130,7 +142,13 @@ class RemootioClient(AsyncClass):
                                                the device's API Secret Key with key as defined by the constant
                                                ``aioremootio.constants.CONNECTION_OPTION_KEY_API_SECRET_KEY`` and
                                                the device's API Auth Key with key as defined by the constant
-                                               ``aioremootio.constants.CONNECTION_OPTION_KEY_API_AUTH_KEY``.
+                                               ``aioremootio.constants.CONNECTION_OPTION_KEY_API_AUTH_KEY``,
+                                               furthermore it can contain a flag with a key as defined by the constant
+                                               ``aioremootio.constants.CONNECTION_OPTION_KEY_CONNECT_AUTOMATICALLY``
+                                               to control whether the client should establish a connection to the
+                                               device during its initialization right after its construction or not.
+                                               Default value for the latter optional flag is defined by the constant
+                                               ``aioremootio.constants.CONNECTION_OPTION_DEFAULT_VALUE_CONNECT_AUTOMATICALLY``.
                                                To get the API Secret Key and API Auth Key for the device,
                                                you must enable the API on the device. For more information please
                                                consult the Remootio Websocket API documentation at
@@ -138,8 +156,8 @@ class RemootioClient(AsyncClass):
         :param client_session                : The aiohttp client session to be used by the client.
         :param logger_configuration          : The logger configuration to be used by the client.
                                                If ``aioremootio.models.LoggerConfiguration.logger`` is set then a
-                                               child with suffix ``__name__`` of it will be used, otherwise an logger
-                                               instance will by instantiated and used.
+                                               child with suffix ``__name__`` of it will be used, otherwise a logger
+                                               instance will be instantiated and used.
                                                If ``aioremootio.models.LoggerConfiguration.level`` is set then this
                                                level will be used by the internally instantiated logger.
         :param state_change_listeners        : A list of
@@ -147,8 +165,8 @@ class RemootioClient(AsyncClass):
                                                instances to be invoked if the state of the device changes.
         :param event_listeners               : A list of
                                                ``aioremootio.listeners.Listener[aioremootio.models.Event]``
-                                               instances to be invoked if an by the client supported event occurs on
-                                               the device.
+                                               instances to be invoked if an event occurs on the device that is
+                                               supported by the client.
         """
         super(RemootioClient, self).__init__()
 
@@ -166,7 +184,9 @@ class RemootioClient(AsyncClass):
             connection_options = ConnectionOptions(
                 connection_options[CONNECTION_OPTION_KEY_HOST],
                 connection_options[CONNECTION_OPTION_KEY_API_SECRET_KEY],
-                connection_options[CONNECTION_OPTION_KEY_API_AUTH_KEY]
+                connection_options[CONNECTION_OPTION_KEY_API_AUTH_KEY],
+                connection_options.get(
+                    CONNECTION_OPTION_KEY_CONNECT_AUTOMATICALLY, CONNECTION_OPTION_DEFAULT_VALUE_CONNECT_AUTOMATICALLY)
             )
 
         logger: Optional[logging.Logger] = None
@@ -191,38 +211,49 @@ class RemootioClient(AsyncClass):
             handler.setFormatter(logging.Formatter(fmt="%(asctime)s [%(levelname)s] %(message)s"))
             logger.addHandler(handler)
 
-        self.__connection_options = connection_options
-        self.__client_session = client_session
         self.__logger = logger
-        self.__state_change_listeners = []
-        self.__modifying_state_change_listeners_lock = asyncio.Lock()
-        self.__event_listeners = []
-        self.__modifying_event_listeners_lock = asyncio.Lock()
-        self.__ws = None
+        self.__connection_options = connection_options
         self.__host = self.__connection_options.host
         self.__api_version = None
         self.__serial_number = None
         self.__uptime = None
         self.__state = State.UNKNOWN
-        self.__session_key = None
         self.__updating_last_action_id_lock = asyncio.Lock()
         self.__last_action_id = None
-        self.__connecting_lock = asyncio.Lock()
-        self.__disconnecting_lock = asyncio.Lock()
-        self.__authenticating_lock = asyncio.Lock()
+        self.__authenticating = False
         self.__authenticated = False
-        self.__saying_hello_lock = asyncio.Lock()
-        self.__hello_said = False
+        self.__saying_hello = False
+        self.__said_hello = False
         self.__device_answered_to_hello = False
-        self.__terminating_lock = asyncio.Lock()
-        self.__terminated = False
-        self.__initializing_lock = asyncio.Lock()
+
+        # Lifecycle
+        self.__lifecycle = asyncio.Condition()
+        self.__initializing = False
         self.__initialized = False
+        self.__connecting = False
+        self.__disconnecting = False
+        self.__terminating = False
+        self.__terminated = False
+
+        # Websocket
+        self.__client_session = client_session
+        self.__ws = None
+        self.__session_key = None
+
+        # Tasks
+        self.__task_store = TaskStore(self.loop)
         self.__do_receive_and_handle_messages = True
         self.__receives_and_handles_messages = False
         self.__do_send_pings = True
         self.__sends_pings = False
-        self.__task_store = TaskStore(self.loop)
+
+        # State change listeners
+        self.__state_change_listeners = []
+        self.__modifying_state_change_listeners_lock = asyncio.Lock()
+
+        # Event listeners
+        self.__event_listeners = []
+        self.__modifying_event_listeners_lock = asyncio.Lock()
 
         try:
             CONNECTION_OPTIONS_VOLUPTUOUS_SCHEMA(connection_options.__dict__)
@@ -256,11 +287,9 @@ class RemootioClient(AsyncClass):
 
     async def __ainit__(self, *args, **kwargs) -> NoReturn:
         await super().__ainit__(*args, **kwargs)
-
         await self.__initialize()
 
     async def __adel__(self) -> None:
-        await self.__task_store.close()
         await self.__terminate()
 
     async def __aenter__(self) -> 'RemootioClient':
@@ -269,233 +298,422 @@ class RemootioClient(AsyncClass):
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self.__task_store.close()
         await self.__terminate()
 
-    async def __initialize(self) -> NoReturn:
+    # ----------------------------
+    # Initialization & termination
+    # ----------------------------
+
+    async def __initialize(self) -> bool:
         self.__logger.info("Initializing this client...")
 
-        async with self.__initializing_lock:
-            try:
-                await self.__invoke_state_change_listeners(StateChange(None, self.state))
+        self.__initializing = True
+        try:
+            await self.__invoke_state_change_listeners(StateChange(None, self.state))
 
-                await self.__open_connection(handle_connection_error=False)
+            if self.__connection_options.connect_automatically:
+                async with self.__lifecycle:
+                    try:
+                        connecting_task: asyncio.Task = await self.__start_connecting()
+                        await self.__lifecycle.wait_for(lambda: self.connected)
 
-                if await self.connected and await self.authenticated:
-                    self.__task_store\
-                        .create_task(self.__receive_and_handle_messages(), name=TASK_NAME_MESSAGE_RECEIVER_AND_HANDLER)\
-                        .add_done_callback(self.__handle_task_done)
-                    await self.__wait_for_task_started(TASK_NAME_MESSAGE_RECEIVER_AND_HANDLER)
+                        if connecting_task.exception() is not None:
+                            raise connecting_task.exception()
 
-                    self.__task_store\
-                        .create_task(self.__send_pings(), name=TASK_NAME_PING_SENDER) \
-                        .add_done_callback(self.__handle_task_done)
-                    await self.__wait_for_task_started(TASK_NAME_PING_SENDER)
-            except BaseException as ex:
-                self.__logger.exception("Failed to initialize this client.")
-                raise RemootioClientError(self, "Failed to initialize this client.") from ex
+                        if self.connected:
+                            await self.__start_tasks()
+                    finally:
+                        self.__lifecycle.notify_all()
             else:
-                self.__initialized = True
+                self.__do_receive_and_handle_messages = False
+                self.__do_send_pings = False
+        except BaseException as ex:
+            self.__logger.exception("Failed to initialize this client.")
+            raise RemootioClientError(self, "Failed to initialize this client.") from ex
+        else:
+            self.__initialized = True
+        finally:
+            self.__initializing = False
 
-    async def __terminate(self) -> NoReturn:
+        return self.__initialized
+
+    async def __wait_for_initializing(self) -> bool:
+        while self.__lifecycle.locked() and self.__initializing:
+            self.__logger.debug("This client does currently initializing. "
+                                "Waiting until the progress is done.")
+            await asyncio.sleep(LIFECYCLE_LOCK_DELAY)
+
+        return self.__initialized
+
+    async def __terminate(self) -> bool:
         self.__logger.info("Terminating this client...")
 
-        async with self.__terminating_lock:
-            self.__do_receive_and_handle_messages = False
-            self.__do_send_pings = False
+        self.__terminating = True
+        try:
+            async with self.__lifecycle:
+                try:
+                    await self.__stop_tasks()
+                    await self.remove_state_change_listeners()
+                    await self.remove_event_listeners()
 
-            await self.__wait_for_task_stopped(TASK_NAME_MESSAGE_RECEIVER_AND_HANDLER)
-            await self.__wait_for_task_stopped(TASK_NAME_PING_SENDER)
-            await self.remove_state_change_listeners()
-            await self.remove_event_listeners()
-            await self.__close_connection()
+                    await self.__start_disconnecting()
+                    await self.__lifecycle.wait_for(lambda: not self.connected)
 
+                    await self.__task_store.close()
+                finally:
+                    self.__lifecycle.notify_all()
+        except BaseException as ex:
+            self.__logger.warning("Failed to terminate this client.", ex)
+        else:
             self.__initialized = False
             self.__terminated = True
+        finally:
+            self.__terminating = False
 
-    async def __open_connection(self, handle_connection_error: bool = True) -> ClientWebSocketResponse:
-        if not await self.terminated and (not await self.connected or not await self.authenticated):
-            if await self.connected and not await self.authenticated:
-                self.__logger.warning(
-                    "Living connection to the device will be closed now, because this client isn't authenticated by "
-                    "the device.")
-                await self.__close_connection()
+        return self.__terminated
 
-            # Establishing connection
-            async with self.__connecting_lock:
-                self.__logger.info("Establishing connection to the device...")
-                try:
-                    self.__ws = await self.__client_session.ws_connect(
-                        f"ws://{self.__connection_options.host}:8080/")
-                    self.__logger.info("Connection to the device has been established successfully.")
-                except BaseException as ex:
-                    self.__ws = None
-                    if handle_connection_error:
-                        self.__logger.exception("Unable to establish connection to the device.")
-                    else:
-                        raise RemootioClientConnectionEstablishmentError(
-                            self, "Unable to establish connection to the device.") from ex
+    async def __wait_for_terminating(self) -> bool:
+        while self.__lifecycle.locked() and self.__terminating:
+            self.__logger.debug("This client does currently terminating. "
+                                "Waiting until the progress is done.")
+            await asyncio.sleep(LIFECYCLE_LOCK_DELAY)
 
-            # Authenticating
-            await self.__authenticate(self.__ws)
+        return self.__terminated
 
-            # Say hello
-            await self.__say_hello(self.__ws)
+    # --------------------------
+    # Connecting & disconnecting
+    # --------------------------
+
+    async def __connect(self, handle_connection_error: bool = True) -> ClientWebSocketResponse:
+        if not self.connected:
+            self.__connecting = True
+            try:
+                async with self.__lifecycle:
+                    try:
+                        if self.__ws is not None and not self.__ws.closed and not self.__authenticated:
+                            self.__logger.warning(
+                                "Living connection to the device will be closed now, because this client isn't "
+                                "authenticated by the device.")
+                            await self.__start_disconnecting()
+                            await self.__lifecycle.wait_for(lambda: not self.connected)
+
+                        if self.__ws is None:
+                            # Establish connection to the device
+                            self.__logger.info("Establishing connection to the device...")
+                            try:
+                                self.__ws = await self.__client_session.ws_connect(
+                                    f"ws://{self.__connection_options.host}:8080/")
+                                self.__logger.info("Connection to the device has been established successfully.")
+                            except BaseException as ex:
+                                self.__ws = None
+                                if handle_connection_error:
+                                    self.__logger.exception("Unable to establish connection to the device.")
+                                else:
+                                    raise RemootioClientConnectionEstablishmentError(
+                                        self, "Unable to establish connection to the device.") from ex
+
+                            if self.__is_ws_connected(self.__ws):
+                                # Authenticate this client by the device
+                                await self.__authenticate(self.__ws)
+
+                        if self.__is_ws_connected(self.__ws) and self.__authenticated:
+                            # Say hello to the device
+                            await self.__say_hello(self.__ws)
+
+                        if self.connected:
+                            await self.__invoke_event_listeners(Event(EventSource.CLIENT, EventType.CONNECTED, None))
+                    finally:
+                        self.__lifecycle.notify_all()
+            finally:
+                self.__connecting = False
 
         return self.__ws
 
-    async def __close_connection(self) -> NoReturn:
-        await self.__wait_for_connecting()
-        await self.__wait_for_authenticating()
+    async def __wait_for_connecting(self) -> bool:
+        while self.__lifecycle.locked() and self.__connecting:
+            self.__logger.debug("This client does currently connecting to the device. "
+                                "Waiting until the progress is done.")
+            await asyncio.sleep(LIFECYCLE_LOCK_DELAY)
 
-        async with self.__disconnecting_lock:
-            if self.__ws is not None and not self.__ws.closed:
-                try:
-                    self.__logger.info("Closing connection to the device...")
-                    await self.__ws.close()
-                except BaseException:
-                    self.__logger.warning("Unable to close connection to the device because of an error.",
-                                          exc_info=(self.__logger.getEffectiveLevel() == logging.DEBUG))
-
-            self.__session_key = None
-            self.__last_action_id = None
-            self.__authenticated = False
-            self.__ws = None
+        return self.connected
 
     async def __authenticate(self, ws: ClientWebSocketResponse) -> NoReturn:
-        if not await self.terminated and await self.connected and not await self.authenticated:
-            async with self.__authenticating_lock:
-                self.__logger.info("Authenticating this client by the device...")
+        self.__logger.info("Authenticating this client by the device...")
 
-                try:
-                    await self.__send_frame(AuthFrame(), ws=ws)
+        self.__authenticating = True
+        try:
+            await self.__send_frame(AuthFrame(), ws=ws)
 
-                    frame: [dict, AbstractFrame] = await ws.receive_json(timeout=30)
-                    ensure_frame_type(frame, FrameType.ENCRYPTED)
+            frame: [dict, AbstractFrame] = await ws.receive_json(timeout=30)
+            ensure_frame_type(frame, FrameType.ENCRYPTED)
 
-                    frame = await self.__decrypt_frame(EncryptedFrame(json=frame))
-                    if isinstance(frame, ChallengeFrame):
-                        self.__session_key = frame.session_key
-                        self.__last_action_id = frame.initial_action_id
-                    else:
-                        raise RemootioClientError(self, "Received frame isn't the expected.")
+            frame = await self.__decrypt_frame(EncryptedFrame(json=frame))
+            if isinstance(frame, ChallengeFrame):
+                self.__session_key = frame.session_key
+                self.__last_action_id = frame.initial_action_id
+            else:
+                raise RemootioClientError(self, "Received frame isn't the expected.")
 
-                    await self.__encrypt_and_send_frame(
-                        ActionRequestFrame(await self.__calculate_next_action_id(), ActionType.QUERY), ws=ws)
+            await self.__encrypt_and_send_frame(
+                ActionRequestFrame(await self.__calculate_next_action_id(), ActionType.QUERY), ws=ws)
 
-                    frame = await ws.receive_json(timeout=30)
-                    frame_type: FrameType = retrieve_frame_type(frame)
-                    if frame_type == FrameType.ERROR:
-                        frame = ErrorFrame(json=frame)
-                        raise RemootioClientAuthenticationError(
-                            self, "An error has been occurred on the device during the authentication. Error [%s]" %
-                                  frame.error_type)
-                    elif frame_type == FrameType.ENCRYPTED:
-                        frame = EncryptedFrame(json=frame)
-                    else:
-                        raise RemootioClientError(self, "Unsupported frame was received.")
+            frame = await ws.receive_json(timeout=30)
+            frame_type: FrameType = retrieve_frame_type(frame)
+            if frame_type == FrameType.ERROR:
+                frame = ErrorFrame(json=frame)
+                raise RemootioClientAuthenticationError(
+                    self, "An error has been occurred on the device during the authentication. Error [%s]" %
+                          frame.error_type)
+            elif frame_type == FrameType.ENCRYPTED:
+                frame = EncryptedFrame(json=frame)
+            else:
+                raise RemootioClientError(self, "Unsupported frame was received.")
 
-                    frame = await self.__decrypt_frame(frame)
+            frame = await self.__decrypt_frame(frame)
 
-                    if isinstance(frame, ActionResponseFrame):
-                        if frame.action_type != ActionType.QUERY:
-                            raise RemootioClientError(self, "Received frame isn't the expected.")
+            if isinstance(frame, ActionResponseFrame):
+                if frame.action_type != ActionType.QUERY:
+                    raise RemootioClientError(self, "Received frame isn't the expected.")
 
-                        await self.__handle_action_response_frame(frame)
-                    else:
-                        raise RemootioClientError(self, "Received frame isn't the expected.")
+                await self.__handle_action_response_frame(frame)
+            else:
+                raise RemootioClientError(self, "Received frame isn't the expected.")
 
-                    self.__authenticated = True
-                except RemootioClientAuthenticationError as ex:
-                    self.__logger.exception(ex.message)
-                    self.__session_key = None
-                    self.__last_action_id = None
-                    raise ex
-                except BaseException as ex:
-                    self.__logger.exception("Unable to authenticate this client by the device because of an error.")
-                    self.__session_key = None
-                    self.__last_action_id = None
-                    raise RemootioClientAuthenticationError(
-                        self, "Unable to authenticate this client by the device because of an error.") from ex
+            self.__authenticated = True
+        except RemootioClientAuthenticationError as ex:
+            self.__logger.exception(ex.message)
+            self.__session_key = None
+            self.__last_action_id = None
+            raise ex
+        except BaseException as ex:
+            self.__logger.exception("Unable to authenticate this client by the device because of an error.")
+            self.__session_key = None
+            self.__last_action_id = None
+            raise RemootioClientAuthenticationError(
+                self, "Unable to authenticate this client by the device because of an error.") from ex
+        finally:
+            self.__authenticating = False
 
     async def __say_hello(self, ws: ClientWebSocketResponse):
-        if not self.__hello_said:
-            async with self.__saying_hello_lock:
-                self.__logger.info("Saying hello to the device...")
+        self.__logger.info("Saying hello to the device...")
 
+        if not self.__said_hello:
+            self.__saying_hello = True
+            try:
+                await self.__send_frame(HelloFrame(), ws)
+
+                self.__said_hello = True
+            except BaseException as ex:
+                self.__logger.exception("This client is unable to say hello to the device because of an error.")
+                raise RemootioClientError(
+                    self, "This client is unable to say hello to the device because of an error.") from ex
+            finally:
+                self.__saying_hello = False
+
+        return self.connected
+
+    async def __wait_for_said_hello(self):
+        while not self.__said_hello:
+            self.__logger.debug("This client has not yet said hello to the device. "
+                                "Waiting until it has sid hello.")
+            await asyncio.sleep(WAITING_FOR_SAID_HELLO_DELAY)
+
+    async def __wait_for_device_has_answered_to_hello(self):
+        while not self.__device_answered_to_hello:
+            self.__logger.debug("The device has not yet answered to the hello from this client. "
+                                "Waiting until it has answered.")
+            await asyncio.sleep(WAITING_FOR_DEVICE_ANSWERED_TO_HELLO_DELAY)
+
+    async def __disconnect(self) -> NoReturn:
+        self.__disconnecting = True
+        try:
+            async with self.__lifecycle:
                 try:
-                    await self.__send_frame(HelloFrame(), ws)
+                    if self.__ws is not None and not self.__ws.closed:
+                        try:
+                            self.__logger.info("Disconnecting from the device...")
+                            await self.__ws.close()
+                        except BaseException:
+                            self.__logger.warning("Unable to disconnect from the device because of an error.",
+                                                  exc_info=(self.__logger.getEffectiveLevel() == logging.DEBUG))
 
-                    self.__hello_said = True
-                except BaseException as ex:
-                    self.__logger.exception("This client is unable to say hello to the device because of an error.")
-                    raise RemootioClientError(
-                        self, "This client is unable to say hello to the device because of an error.") from ex
+                    self.__session_key = None
+                    self.__last_action_id = None
+                    self.__said_hello = False
+                    self.__authenticated = False
+                    self.__ws = None
 
-    async def __send_frame(
-            self, frame: AbstractJSONHolderFrame, ws: Optional[ClientWebSocketResponse] = None) -> NoReturn:
-        if not await self.terminated:
-            if ws is None:
-                ws = await self.__open_connection()
+                    if not self.connected:
+                        await self.__invoke_event_listeners(Event(EventSource.CLIENT, EventType.DISCONNECTED, None))
+                finally:
+                    self.__lifecycle.notify_all()
+        finally:
+            self.__disconnecting = False
 
-            if ws is not None and not ws.closed:
-                if isinstance(frame, HelloFrame) or isinstance(frame, PingFrame) or self.__authenticating_lock.locked():
-                    pass
-                else:
-                    await self.__wait_for_said_hello()
-                    await self.__wait_for_device_has_answered_to_hello()
+    async def __wait_for_disconnecting(self) -> bool:
+        while self.__lifecycle.locked() and self.__disconnecting:
+            self.__logger.debug("This client does currently disconnecting from the device. "
+                                "Waiting until the progress is done.")
+            await asyncio.sleep(LIFECYCLE_LOCK_DELAY)
 
-                if self.__logger.getEffectiveLevel() == logging.DEBUG:
-                    self.__logger.info("Sending frame... Frame [%s]", json.dumps(frame.json))
-                else:
-                    self.__logger.info("Sending frame...")
+        return not self.connected
 
-                try:
-                    if isinstance(frame, HelloFrame) and self.__hello_said:
-                        self.__logger.warning("Frame will be don't sent because this client has already said hello "
-                                              "to the device.")
-                    else:
-                        await ws.send_json(frame.json)
-                except BaseException as ex:
-                    if self.__logger.getEffectiveLevel() == logging.DEBUG:
-                        self.__logger.warning("Sending of frame has been failed.", exc_info=True)
-                    else:
-                        self.__logger.warning("Sending of frame has been failed.")
+    # ---------------------
+    # Tasks & task handling
+    # ---------------------
 
-                    raise RemootioClientError(self, "Sending of frame has been failed.") from ex
-            else:
-                raise RemootioClientConnectionEstablishmentError(
-                    self, "Sending of frame has been failed because connection to the device can't be established.")
-        else:
-            if self.__logger.getEffectiveLevel() == logging.DEBUG:
-                self.__logger.warning("Frame will be don't sent because this client is already terminated. Frame [%s]",
-                                      json.dumps(frame.json))
-            else:
-                self.__logger.warning("Frame will be don't sent because this client is already terminated.")
+    async def __start_tasks(self, force: bool = False) -> bool:
+        result: bool = await self.__start_receiving_and_handling_of_messages(force) and \
+                       await self.__start_sending_of_pings(force)
 
-    async def __encrypt_and_send_frame(
-            self, frame: ActionRequestFrame, ws: Optional[ClientWebSocketResponse] = None) -> NoReturn:
-        self.__logger.info("Encrypting and sending ActionRequestFrame... ActionType [%s]", frame.action_type)
+        if result:
+            await self.__invoke_event_listeners(Event(EventSource.CLIENT, EventType.TASKS_STARTED, None))
 
-        encrypted_frame: EncryptedFrame = await self.__encrypt_frame(frame)
-        await self.__send_frame(encrypted_frame, ws)
+        return result
+
+    async def __start_receiving_and_handling_of_messages(self, force: bool = False) -> bool:
+        result: bool = False
+
+        if force:
+            self.__do_receive_and_handle_messages = True
+
+        if self.connected and self.__do_receive_and_handle_messages and not self.__receives_and_handles_messages:
+            self.__task_store \
+                .create_task(self.__receive_and_handle_messages(), name=TASK_NAME_MESSAGE_RECEIVER_AND_HANDLER) \
+                .add_done_callback(self.__handle_task_done)
+            result = await self.__wait_for_task_started(TASK_NAME_MESSAGE_RECEIVER_AND_HANDLER)
+
+        return result
+
+    async def __start_sending_of_pings(self, force: bool = False) -> bool:
+        result: bool = False
+
+        if force:
+            self.__do_send_pings = True
+
+        if self.connected and self.__do_send_pings and not self.__sends_pings:
+            self.__task_store \
+                .create_task(self.__send_pings(), name=TASK_NAME_PING_SENDER) \
+                .add_done_callback(self.__handle_task_done)
+            result = await self.__wait_for_task_started(TASK_NAME_PING_SENDER)
+
+        return result
+
+    async def __start_connecting(self) -> asyncio.Task:
+        result: asyncio.Task = self.__task_store \
+            .create_task(self.__connect(False), name=TASK_NAME_CONNECTOR)
+        result.add_done_callback(self.__handle_task_done)
+
+        await self.__wait_for_task_started(TASK_NAME_CONNECTOR)
+
+        return result
+
+    async def __start_disconnecting(self) -> asyncio.Task:
+        result: asyncio.Task = self.__task_store \
+            .create_task(self.__disconnect(), name=TASK_NAME_DISCONNECTOR)
+        result.add_done_callback(self.__handle_task_done)
+
+        await self.__wait_for_task_started(TASK_NAME_DISCONNECTOR)
+
+        return result
+
+    async def __wait_for_task_started(self, task_name: str) -> bool:
+        result: bool = False
+
+        if task_name == TASK_NAME_MESSAGE_RECEIVER_AND_HANDLER:
+            while not self.__receives_and_handles_messages:
+                self.__logger.debug("Task to receive and handle messages isn't started yet. "
+                                    "Waiting as long as it is started.")
+                await asyncio.sleep(TASK_STARTED_DELAY)
+
+            result = self.__receives_and_handles_messages
+        elif task_name == TASK_NAME_PING_SENDER:
+            while not self.__sends_pings:
+                self.__logger.debug("Task to sending PINGs isn't started yet. "
+                                    "Waiting as long as it is started.")
+                await asyncio.sleep(TASK_STARTED_DELAY)
+
+            result = self.__sends_pings
+        elif task_name == TASK_NAME_CONNECTOR:
+            while not self.__connecting:
+                self.__logger.debug("Task to connect to the device isn't started yet. "
+                                    "Waiting as long as it is started.")
+                await asyncio.sleep(TASK_STARTED_DELAY)
+
+            result = self.__connecting
+        elif task_name == TASK_NAME_DISCONNECTOR:
+            while not self.__disconnecting:
+                self.__logger.debug("Task to disconnect from the device isn't started yet. "
+                                    "Waiting as long as it is started.")
+                await asyncio.sleep(TASK_STARTED_DELAY)
+
+            result = self.__disconnecting
+
+        return result
+
+    async def __stop_tasks(self) -> bool:
+        self.__do_receive_and_handle_messages = False
+        self.__do_send_pings = False
+
+        result: bool = await self.__stop_task(TASK_NAME_MESSAGE_RECEIVER_AND_HANDLER) and \
+            await self.__stop_task(TASK_NAME_PING_SENDER)
+
+        if result:
+            await self.__invoke_event_listeners(Event(EventSource.CLIENT, EventType.TASKS_STOPPED, None))
+
+        return result
+
+    async def __stop_task(self, name: str) -> bool:
+        result: bool = False
+
+        task: Optional[asyncio.Task] = self.__get_task(name)
+        if task is not None:
+            task.cancel()
+            result = await asyncio.wait_for(self.__wait_for_task_stopped(task), TASK_STOPPED_TIMEOUT)
+
+        return result
+
+    async def __wait_for_task_stopped(self, task: [str | asyncio.Task]) -> bool:
+        result: bool = False
+
+        if isinstance(task, str):
+            task = self.__get_task(task)
+
+        if task is not None:
+            while not task.done():
+                self.__logger.debug("Task \"%s\" isn't sopped yet. Waiting as long as it is stopped.", task.get_name())
+                await asyncio.sleep(TASK_STOPPED_DELAY)
+
+            result = task.done()
+
+        return result
+
+    def __get_task(self, name: str) -> Optional[asyncio.Task]:
+        result: Optional[asyncio.Task] = None
+
+        for task in self.__task_store.tasks:
+            if task.get_name() == name:
+                result = task
+                break
+
+        return result
 
     async def __send_pings(self) -> NoReturn:
         try:
             while True:
-                if not self.__terminating_lock.locked() and self.__do_send_pings:
+                if self.__do_send_pings:
                     self.__sends_pings = True
 
                     ws: Optional[ClientWebSocketResponse] = None
                     try:
-                        ws = await self.__open_connection()
+                        ws = await self.__connect()
                     except BaseException:
                         self.__logger.warning("Sending PINGs by this client will be delayed "
                                               "because connection to the device can't be established.")
                         await asyncio.sleep(PING_SENDER_HEARTBEAT)
                         continue
 
-                    if ws is not None and not ws.closed:
+                    if self.__is_ws_connected(ws):
                         try:
                             await self.__send_frame(PingFrame(), ws)
                         except BaseException:
@@ -506,11 +724,11 @@ class RemootioClient(AsyncClass):
 
                     await asyncio.sleep(PING_SENDER_HEARTBEAT)
                 else:
-                    self.__logger.info("Sending PINGs by this client will be now stopped because it is about to be "
-                                       "terminated.")
+                    self.__logger.info("Sending PINGs by this client will be now stopped.")
                     return
         except CancelledError:
             self.__logger.info("Sending PINGs by this client will be now stopped because of cancelling the task.")
+            raise
         except BaseException:
             self.__logger.exception("Sending PINGs by this client will be now stopped because of an error.")
             raise
@@ -518,19 +736,19 @@ class RemootioClient(AsyncClass):
     async def __receive_and_handle_messages(self) -> NoReturn:
         try:
             while True:
-                if not self.__terminating_lock.locked() and self.__do_receive_and_handle_messages:
+                if self.__do_receive_and_handle_messages:
                     self.__receives_and_handles_messages = True
 
                     ws: Optional[ClientWebSocketResponse] = None
                     try:
-                        ws = await self.__open_connection()
+                        ws = await self.__connect()
                     except BaseException:
                         self.__logger.warning("Receiving and handling of messages by this client will be delayed "
                                               "because connection to the device can't be established.")
                         await asyncio.sleep(MESSAGE_HANDLER_HEARTBEAT)
                         continue
 
-                    if ws is not None and not ws.closed:
+                    if self.__is_ws_connected(ws):
                         async for msg in ws:
                             try:
                                 self.__logger.debug("Message received from device. Type [%s]", msg.type)
@@ -577,12 +795,12 @@ class RemootioClient(AsyncClass):
                                               "because connection to the device can't be established.")
                         await asyncio.sleep(MESSAGE_HANDLER_HEARTBEAT)
                 else:
-                    self.__logger.info("Receiving and handling of messages by this client will be now stopped "
-                                       "because it is about to be terminated.")
+                    self.__logger.info("Receiving and handling of messages by this client will be now stopped.")
                     return
         except CancelledError:
             self.__logger.info("Receiving and handling of messages by this client will be now stopped "
                                "because of cancelling the task.")
+            raise
         except BaseException:
             self.__logger.exception("Receiving and handling of messages by this client will be now stopped"
                                     "because of an error.")
@@ -593,10 +811,76 @@ class RemootioClient(AsyncClass):
             self.__receives_and_handles_messages = False
         elif task.get_name() == TASK_NAME_PING_SENDER:
             self.__sends_pings = False
+        elif task.get_name() == TASK_NAME_CONNECTOR:
+            self.__connecting = False
+        elif task.get_name() == TASK_NAME_DISCONNECTOR:
+            self.__disconnecting = False
+
+    # -------------------------------
+    # Sending of frames to the device
+    # -------------------------------
+
+    async def __send_frame(
+            self, frame: AbstractJSONHolderFrame, ws: Optional[ClientWebSocketResponse] = None) -> NoReturn:
+        if not self.__terminated:
+            if ws is None:
+                ws = await self.__connect()
+
+            if self.__is_ws_connected(ws):
+                if isinstance(frame, HelloFrame) or isinstance(frame, PingFrame) or self.__authenticating:
+                    pass
+                else:
+                    await self.__wait_for_said_hello()
+                    await self.__wait_for_device_has_answered_to_hello()
+
+                if self.__logger.getEffectiveLevel() == logging.DEBUG:
+                    self.__logger.info("Sending frame... Frame [%s]", json.dumps(frame.json))
+                else:
+                    self.__logger.info("Sending frame...")
+
+                try:
+                    if isinstance(frame, HelloFrame) and self.__said_hello:
+                        self.__logger.warning("Frame will be don't sent because this client has already said hello "
+                                              "to the device.")
+                    else:
+                        await ws.send_json(frame.json)
+                except BaseException as ex:
+                    self.__logger.error("Sending of frame has been failed.",
+                                        exc_info=(self.__logger.getEffectiveLevel() == logging.DEBUG))
+
+                    raise RemootioClientError(self, "Sending of frame has been failed.") from ex
+            else:
+                raise RemootioClientConnectionEstablishmentError(
+                    self, "Sending of frame has been failed because connection to the device can't be established.")
+        else:
+            if self.__logger.getEffectiveLevel() == logging.DEBUG:
+                self.__logger.warning("Frame will be don't sent because this client is already terminated. Frame [%s]",
+                                      json.dumps(frame.json))
+            else:
+                self.__logger.warning("Frame will be don't sent because this client is already terminated.")
+
+    async def __encrypt_and_send_frame(
+            self, frame: ActionRequestFrame, ws: Optional[ClientWebSocketResponse] = None) -> NoReturn:
+        self.__logger.info("Encrypting and sending ActionRequestFrame... ActionType [%s]", frame.action_type)
+
+        encrypted_frame: EncryptedFrame = await self.__encrypt_frame(frame)
+        await self.__send_frame(encrypted_frame, ws)
+
+    # ----------------------------------------
+    # Handling frames received from the device
+    # ----------------------------------------
 
     async def __handle_error_frame(self, frame: ErrorFrame) -> NoReturn:
         self.__logger.debug("Handling received ErrorFrame...")
         self.__logger.error("An error has been occurred on the device. Type [%s]" % frame.error_type)
+        if frame.error_type == ErrorType.CONNECTION_TIMEOUT:
+            await self.__disconnect()
+        elif frame.error_type == ErrorType.AUTHENTICATION_TIMEOUT:
+            await self.__disconnect()
+        elif frame.error_type == ErrorType.AUTHENTICATION_TIMEOUT:
+            await self.__disconnect()
+        elif frame.error_type == ErrorType.ALREADY_AUTHENTICATED:
+            self.__authenticated = True
 
     async def __handle_server_hello_frame(self, frame: ServerHelloFrame) -> NoReturn:
         self.__logger.debug("Handling received ServerHelloFrame...")
@@ -685,7 +969,7 @@ class RemootioClient(AsyncClass):
                 elif frame.event_type == EventType.RESTART:
                     await self.__change_state(frame.state)
 
-                await self.__invoke_event_listener(Event(frame.event_source, frame.event_type, frame.key))
+                await self.__invoke_event_listeners(Event(frame.event_source, frame.event_type, frame.key))
             else:
                 self.__logger.debug(
                     "An event has been occurred on the device but before this client has been connected to the device. "
@@ -694,7 +978,51 @@ class RemootioClient(AsyncClass):
             self.__logger.debug("An unsupported event has been occurred on the device.")
 
     async def __handle_connection_closed(self):
-        await self.__close_connection()
+        await self.__disconnect()
+
+    # -----------------------------
+    # Frame encryption & decryption
+    # -----------------------------
+
+    async def __encrypt_frame(self, frame: ActionRequestFrame) -> EncryptedFrame:
+        self.__logger.debug("Encrypting frame... Frame [%s]", frame.json)
+        result: Optional[EncryptedFrame] = None
+
+        try:
+            session_key: Union[bytes, bytearray] = self.__retrieve_session_key()
+            api_auth_key: bytearray = bytearray.fromhex(self.__connection_options.api_auth_key)
+
+            # Encrypt frame
+            iv_bytes: bytes = get_random_bytes(AES.block_size)
+            cipher: AES = AES.new(key=session_key, mode=AES.MODE_CBC, iv=iv_bytes)
+
+            payload_bytes: bytes = bytearray(json.dumps(frame.json), ENCODING)
+            payload_bytes = pad(payload_bytes, AES.block_size)
+            payload_bytes = cipher.encrypt(payload_bytes)
+
+            # ATTENTION: Order of entries in the following dictionary is important for calculating of the mac.
+            data: dict = {
+                'iv': b64encode(iv_bytes).decode(),
+                'payload': b64encode(payload_bytes).decode()
+            }
+            data_str: str = json.dumps(data, separators=(",", ":"))
+            data_bytes: bytearray = bytearray(data_str, ENCODING)
+
+            # Create mac
+            hmac: HMAC = HMAC.new(key=api_auth_key, digestmod=SHA256)
+            hmac = hmac.update(data_bytes)
+            mac_bytes: bytes = hmac.digest()
+
+            # Create encrypted frame
+            result = EncryptedFrame(payload=data["payload"], iv=data["iv"], mac=str(b64encode(mac_bytes), ENCODING))
+        except RemootioError:
+            raise
+        except BaseException as ex:
+            self.__logger.exception("Frame can't be encrypted because of an error.")
+            raise RemootioClientEncryptionError(self, "Frame can't be encrypted because of an error.") from ex
+
+        self.__logger.debug("Frame encrypted successfully. Frame [%s] EncryptedFrame [%s]", frame.json, result.json)
+        return result
 
     async def __decrypt_frame(self, frame: EncryptedFrame) -> Union[ActionResponseFrame, EventFrame, ChallengeFrame]:
         self.__logger.debug("Decrypting frame... Frame [%s]", frame.json)
@@ -742,45 +1070,9 @@ class RemootioClient(AsyncClass):
         self.__logger.debug("Frame decrypted successfully. Frame [%s] DecryptedFrame [%s]", frame.json, result.json)
         return result
 
-    async def __encrypt_frame(self, frame: ActionRequestFrame) -> EncryptedFrame:
-        self.__logger.debug("Encrypting frame... Frame [%s]", frame.json)
-        result: Optional[EncryptedFrame] = None
-
-        try:
-            session_key: Union[bytes, bytearray] = self.__retrieve_session_key()
-            api_auth_key: bytearray = bytearray.fromhex(self.__connection_options.api_auth_key)
-
-            # Encrypt frame
-            iv_bytes: bytes = get_random_bytes(AES.block_size)
-            cipher: AES = AES.new(key=session_key, mode=AES.MODE_CBC, iv=iv_bytes)
-
-            payload_bytes: bytes = bytearray(json.dumps(frame.json), ENCODING)
-            payload_bytes = pad(payload_bytes, AES.block_size)
-            payload_bytes = cipher.encrypt(payload_bytes)
-
-            # ATTENTION: Order of entries in the following dictionary is important for calculating of the mac.
-            data: dict = {
-                'iv': b64encode(iv_bytes).decode(),
-                'payload': b64encode(payload_bytes).decode()
-            }
-            data_str: str = json.dumps(data, separators=(",", ":"))
-            data_bytes: bytearray = bytearray(data_str, ENCODING)
-
-            # Create mac
-            hmac: HMAC = HMAC.new(key=api_auth_key, digestmod=SHA256)
-            hmac = hmac.update(data_bytes)
-            mac_bytes: bytes = hmac.digest()
-
-            # Create encrypted frame
-            result = EncryptedFrame(payload=data["payload"], iv=data["iv"], mac=str(b64encode(mac_bytes), ENCODING))
-        except RemootioError:
-            raise
-        except BaseException as ex:
-            self.__logger.exception("Frame can't be encrypted because of an error.")
-            raise RemootioClientEncryptionError(self, "Frame can't be encrypted because of an error.") from ex
-
-        self.__logger.debug("Frame encrypted successfully. Frame [%s] EncryptedFrame [%s]", frame.json, result.json)
-        return result
+    # ----------------------
+    # State change listeners
+    # ----------------------
 
     async def __invoke_state_change_listeners(self, state_change: StateChange) -> NoReturn:
         await self.__wait_for_modifying_state_change_listeners()
@@ -798,7 +1090,17 @@ class RemootioClient(AsyncClass):
                     self.__logger.warning("An error has been occurred during invoking the state listener.",
                                           exc_info=True)
 
-    async def __invoke_event_listener(self, event: Event) -> NoReturn:
+    async def __wait_for_modifying_state_change_listeners(self):
+        while self.__modifying_state_change_listeners_lock.locked():
+            self.__logger.debug("List of state change listeners will be currently modified. "
+                                "Waiting until the progress is done.")
+            await asyncio.sleep(ADDING_STATE_CHANGE_LISTENER_LOCK_DELAY)
+
+    # ---------------
+    # Event listeners
+    # ---------------
+
+    async def __invoke_event_listeners(self, event: Event) -> NoReturn:
         await self.__wait_for_modifying_event_listeners()
 
         event_listeners = self.__event_listeners[:]
@@ -812,6 +1114,16 @@ class RemootioClient(AsyncClass):
                 except BaseException:
                     self.__logger.warning("An error has been occurred during invoking the event listener.",
                                           exc_info=True)
+
+    async def __wait_for_modifying_event_listeners(self):
+        while self.__modifying_event_listeners_lock.locked():
+            self.__logger.debug("List of event listeners will be currently modified. "
+                                "Waiting until the progress is done.")
+            await asyncio.sleep(ADDING_EVENT_LISTENERS_LOCK_DELAY)
+
+    # --------------
+    # State handling
+    # --------------
 
     async def __change_state(self, new_state: State) -> NoReturn:
         old_state: State = self.__state
@@ -883,6 +1195,10 @@ class RemootioClient(AsyncClass):
 
             await self.__invoke_state_change_listeners(StateChange(old_state, self.state))
 
+    # --------------
+    # Helper methods
+    # --------------
+
     def __retrieve_session_key(self) -> Union[bytes, bytearray]:
         result = None
 
@@ -912,111 +1228,104 @@ class RemootioClient(AsyncClass):
                     "LastActionId was updated. OldValue [%s] NewValue [%s]" %
                     (old_last_action_id, self.__last_action_id))
 
-    async def __wait_for_connecting(self):
-        while self.__connecting_lock.locked():
-            self.__logger.debug("This client does currently connecting to the device. "
-                                "Waiting until the progress is done.")
-            await asyncio.sleep(CONNECTING_LOCK_DELAY)
-
-    async def __wait_for_authenticating(self):
-        while self.__authenticating_lock.locked():
-            self.__logger.debug("This client does currently authenticating with the device. "
-                                "Waiting until the progress is done.")
-            await asyncio.sleep(AUTHENTICATING_LOCK_DELAY)
-
-    async def __wait_for_authenticated(self):
-        while not self.__authenticated:
-            self.__logger.debug("This client has not yet authenticated itself with the device. "
-                                "Waiting until the authentication is done.")
-            await asyncio.sleep(WAITING_FOR_CLIENT_IS_AUTHENTICATED_DELAY)
-
-    async def __wait_for_disconnecting(self):
-        while self.__disconnecting_lock.locked():
-            self.__logger.debug("This client does currently disconnecting from the device. "
-                                "Waiting until the progress is done.")
-            await asyncio.sleep(DISCONNECTING_LOCK_DELAY)
-
-    async def __wait_for_terminating(self):
-        while self.__terminating_lock.locked():
-            self.__logger.debug("This client does currently terminating. "
-                                "Waiting until the progress is done.")
-            await asyncio.sleep(TERMINATING_LOCK_DELAY)
-
-    async def __wait_for_initializing(self):
-        while self.__initializing_lock.locked():
-            self.__logger.debug("This client does currently initializing. "
-                                "Waiting until the progress is done.")
-            await asyncio.sleep(INITIALIZING_LOCK_DELAY)
-
-    async def __wait_for_saying_hello(self):
-        while self.__saying_hello_lock.locked():
-            self.__logger.debug("This client is currently saying hello to the device. "
-                                "Waiting until the progress is done.")
-            await asyncio.sleep(SAYING_HELLO_LOCK_DELAY)
-
-    async def __wait_for_said_hello(self):
-        while not self.__hello_said:
-            self.__logger.debug("This client has not yet said hello to the device. "
-                                "Waiting until it has sid hello.")
-            await asyncio.sleep(WAITING_FOR_SAID_HELLO_DELAY)
-
-    async def __wait_for_device_has_answered_to_hello(self):
-        while not self.__device_answered_to_hello:
-            self.__logger.debug("The device has not yet answered to the hello from this client. "
-                                "Waiting until it has answered.")
-            await asyncio.sleep(WAITING_FOR_DEVICE_ANSWERED_TO_HELLO_DELAY)
-
     async def __wait_for_updating_last_action_id(self):
         while self.__updating_last_action_id_lock.locked():
             self.__logger.debug("This client is currently updating the last action id. "
                                 "Waiting until the progress is done.")
             await asyncio.sleep(UPDATING_LAST_ACTION_ID_LOCK_DELAY)
 
-    async def __wait_for_task_started(self, task_name: str):
-        if task_name == TASK_NAME_MESSAGE_RECEIVER_AND_HANDLER:
-            while not self.__receives_and_handles_messages:
-                self.__logger.debug("Task to receive and handle messages isn't started yet. "
-                                    "Waiting as long as it is started.")
-                await asyncio.sleep(TASK_STARTED_DELAY)
-        elif task_name == TASK_NAME_PING_SENDER:
-            while not self.__sends_pings:
-                self.__logger.debug("Task to sending isn't started yet. "
-                                    "Waiting as long as it is started.")
-                await asyncio.sleep(TASK_STARTED_DELAY)
-
-    async def __wait_for_task_stopped(self, task_name: str):
-        if task_name == TASK_NAME_MESSAGE_RECEIVER_AND_HANDLER:
-            while self.__receives_and_handles_messages:
-                self.__logger.debug("Task to receive and handle messages isn't stopped yet. "
-                                    "Waiting as long as it is stopped.")
-                await asyncio.sleep(TASK_STOPPED_DELAY)
-        elif task_name == TASK_NAME_PING_SENDER:
-            while self.__sends_pings:
-                self.__logger.debug("Task to sending isn't stopped yet. "
-                                    "Waiting as long as it is stopped.")
-                await asyncio.sleep(TASK_STOPPED_DELAY)
-
-    async def __wait_for_modifying_state_change_listeners(self):
-        while self.__modifying_state_change_listeners_lock.locked():
-            self.__logger.debug("List of state change listeners will be currently modified. "
-                                "Waiting until the progress is done.")
-            await asyncio.sleep(ADDING_STATE_CHANGE_LISTENER_LOCK_DELAY)
-
-    async def __wait_for_modifying_event_listeners(self):
-        while self.__modifying_event_listeners_lock.locked():
-            self.__logger.debug("List of event listeners will be currently modified. "
-                                "Waiting until the progress is done.")
-            await asyncio.sleep(ADDING_EVENT_LISTENERS_LOCK_DELAY)
-
     async def __trigger(self, action_type: ActionType) -> NoReturn:
-        if await self.terminated:
+        if await self.__wait_for_terminating():
             raise RemootioClientError(
                 self, "Unable to send frame because this client is already terminated. ActionType [%s]" % action_type)
+
+        await self.__wait_for_initializing()
+
+        if not self.connected:
+            await self.connect()
 
         action_id: int = await self.__calculate_next_action_id()
         frame: ActionRequestFrame = ActionRequestFrame(action_id, action_type)
 
         await self.__encrypt_and_send_frame(frame)
+
+    # ----------------------------------------
+    # Public accessible methods and properties
+    # ----------------------------------------
+
+    @property
+    def terminated(self) -> bool:
+        """
+        Determines whether this client is terminated. That mains that background tasks created by this client are
+        stopped and the WebSocket connection to the device is closed.
+        :return: ``true`` if this client is terminated, otherwise ``false``
+        """
+        return self.__terminated
+
+    async def terminate(self) -> bool:
+        """
+        Terminates this client. After the client is terminated it isn't possible to send any action to the Remootio
+        device via it, furthermore the client doesn't receive and handles any messages sent by the Remootio device.
+        :return: ``true`` if this client was terminated successfully, otherwise ``false``
+        """
+        result: bool = await self.__wait_for_terminating()
+
+        if not result:
+            result = await self.__terminate()
+
+        return result
+
+    def __is_ws_connected(self, ws: Optional[ClientWebSocketResponse] = None):
+        if ws is None:
+            ws = self.__ws
+
+        return ws is not None and not ws.closed
+
+    @property
+    def connected(self) -> bool:
+        """
+        Determines whether this client is connected to the device. That mains a WebSocket connection is successfully
+        established to the device, the client was successfully authenticated by the device, furthermore the client
+        has said hello to the device.
+        :return: ``true`` if this client is connected to the device, otherwise ``false``
+        """
+        return self.__is_ws_connected() and self.__authenticated and self.__said_hello
+
+    async def connect(self) -> bool:
+        """
+        Connects this client to the device.
+        :return: ``true`` if this client is connected to the device, otherwise ``false``
+        """
+
+        await self.__wait_for_initializing()
+        await self.__wait_for_terminating()
+        await self.__wait_for_disconnecting()
+
+        result: bool = await self.__wait_for_connecting()
+
+        if not self.__terminated and self.__initialized and not result:
+            await self.__connect(False)
+            await self.__start_tasks(True)
+
+        return self.connected
+
+    async def disconnect(self) -> bool:
+        """
+        Disconnects this client from the device.
+        :return: ``true`` if this client is disconnected from the device, otherwise ``false``
+        """
+
+        await self.__wait_for_initializing()
+        await self.__wait_for_terminating()
+        await self.__wait_for_connecting()
+
+        result: bool = await self.__wait_for_disconnecting()
+
+        if not self.__terminated and self.__initialized and not result:
+            await self.__stop_tasks()
+            await self.__disconnect()
+
+        return not self.connected
 
     async def trigger(self) -> NoReturn:
         """
@@ -1075,23 +1384,17 @@ class RemootioClient(AsyncClass):
         return self.__host
 
     @property
-    async def serial_number(self) -> Optional[str]:
+    def serial_number(self) -> Optional[str]:
         """
         :return: Serial number of the device
         """
-
-        await self.__wait_for_device_has_answered_to_hello()
-
         return self.__serial_number
 
     @property
-    async def api_version(self) -> int:
+    def api_version(self) -> int:
         """
         :return: API version supported by the device
         """
-
-        await self.__wait_for_device_has_answered_to_hello()
-
         return self.__api_version
 
     @property
@@ -1102,94 +1405,24 @@ class RemootioClient(AsyncClass):
         return self.__state
 
     @property
-    async def uptime(self) -> Optional[int]:
+    def uptime(self) -> Optional[int]:
         """
         :return: Uptime of the device since last start/restart
         """
-
-        if self.__uptime is None:
-            await self.__wait_for_authenticated()
-
         return self.__uptime
 
     @property
-    async def connected(self) -> bool:
-        """
-        Determines whether this client is connected to the device. This mains a WebSocket connection is successfully
-        established to the device.
-        :return: ``true`` if this client is connected to the device, otherwise ``false``
-        """
-
-        await self.__wait_for_disconnecting()
-        await self.__wait_for_connecting()
-
-        return self.__ws is not None and not self.__ws.closed
-
-    @property
-    async def authenticated(self) -> bool:
-        """
-        Determines whether this client is authenticated on the device.
-        :return: ``true`` if this client is authenticated with the device, otherwise ``false``
-        """
-
-        await self.__wait_for_authenticating()
-
-        return self.__authenticated
-
-    @property
-    async def initialized(self) -> bool:
-        """
-        Determines whether this client is initialized. This mains that this client has successfully established a
-        WebSocket connection to the device and is successfully authenticated on it, furthermore that all by the
-        client needed background tasks are created and started.
-        :return: ``true`` if this client is initialized, otherwise ``false``
-        """
-
-        await self.__wait_for_initializing()
-
-        return self.__initialized
-
-    @property
-    async def said_hello(self):
+    def said_hello(self):
         """
         Determines whether this client has already said hello during its initialization to the device and the device
         answered to it. This must be done before sending any action to the device.
-        If any action will be send using this client to the device before the client says hello to the device and the
+        If any action should be sent using this client to the device before the client says hello to the device and the
         device answers to it, then the sending of the action will be paused as so long as the before described progress
         isn't done.
         :return: ``true`` if this client has already said hello to the device and the device answered,
                  otherwise ``false``
         """
-
-        await self.__wait_for_saying_hello()
-
-        return self.__hello_said and self.__device_answered_to_hello
-
-    async def terminate(self) -> bool:
-        """
-        Terminates this client. After the client is terminated it isn't possible to send any action to the Remootio
-        device via it, furthermore the client doesn't receives and handles any messages sent by the Remootio device.
-        :return: ``true`` if this client was terminated successfully, otherwise ``false``
-        """
-        result: bool = await self.terminated
-
-        if not result:
-            await self.__terminate()
-            result = await self.terminated
-
-        return result
-
-    @property
-    async def terminated(self) -> bool:
-        """
-        Determines whether this client is terminated. This mains that background tasks created by this client are
-        stopped and the WebSocket connection to the device is closed.
-        :return: ``true`` if this client is terminated, otherwise ``false``
-        """
-
-        await self.__wait_for_terminating()
-
-        return self.__terminated
+        return self.__said_hello and self.__device_answered_to_hello
 
     async def add_state_change_listener(self, state_change_listener: Listener[StateChange]) -> bool:
         """
@@ -1232,7 +1465,6 @@ class RemootioClient(AsyncClass):
         :param state_change_listener: the ``aioremootio.listeners.Listener[aioremootio.models.StateChange]``
         :return: ``true`` if the listener is already in the list of listeners, otherwise ``false``
         """
-
         return state_change_listener in self.__state_change_listeners
 
     async def remove_state_change_listeners(self) -> int:
@@ -1255,7 +1487,7 @@ class RemootioClient(AsyncClass):
     async def add_event_listener(self, event_listener: Listener[Event]) -> bool:
         """
         Adds the given ``aioremootio.listeners.Listener[aioremootio.models.Event]`` to the list of listeners to be
-        invoked if an by the client supported event occurs on the device.
+        invoked if an event occurs on the device that is supported by the client.
         :param event_listener: the ``aioremootio.listeners.Listener[aioremootio.models.Event]``
         :return: ``true`` if the listener was successfully added to the list of listeners, otherwise ``false``
         """
@@ -1272,7 +1504,7 @@ class RemootioClient(AsyncClass):
     async def remove_event_listener(self, event_listener: Listener[Event]) -> bool:
         """
         Removes the given ``aioremootio.listeners.Listener[aioremootio.models.Event]`` from the list of listeners
-        to be invoked if an by the client supported event occurs on the device.
+        to be invoked if event occurs on the device that is supported by the client.
         :param event_listener: the ``aioremootio.listeners.Listener[aioremootio.models.Event]``
         :return: ``true`` if the listener was successfully removed from the list of listeners, otherwise ``false``
         """
@@ -1289,17 +1521,16 @@ class RemootioClient(AsyncClass):
     def has_event_listener(self, event_listener: Listener[Event]) -> bool:
         """
         Determines whether the given ``aioremootio.listeners.Listener[aioremootio.models.Event]`` is already
-        in the list of listeners to be invoked if an by the client supported event occurs on the device.
+        in the list of listeners to be invoked if an event occurs on the device that is supported by the client.
         :param event_listener: the ``aioremootio.listeners.Listener[aioremootio.models.StateChange]``
         :return: ``true`` if the listener is already in the list of listeners, otherwise ``false``
         """
-
         return event_listener in self.__event_listeners
 
     async def remove_event_listeners(self) -> int:
         """
         Removes all ``aioremootio.listeners.Listener[aioremootio.models.Event]`` instances from the list of
-        listeners to be invoked if an by the client supported event occurs on the device.
+        listeners to be invoked if an event occurs on the device that is supported by the client.
         :return: number of removed ``aioremootio.listeners.Listener[aioremootio.models.Event]`` instances
         """
 
