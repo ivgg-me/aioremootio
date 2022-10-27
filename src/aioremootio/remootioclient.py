@@ -390,27 +390,33 @@ class RemootioClient(AsyncClass):
             try:
                 async with self.__lifecycle:
                     try:
-                        if self.__ws is not None and not self.__ws.closed and not self.__authenticated:
+                        if self.__is_ws_connected() and not self.__authenticated:
                             self.__logger.warning(
-                                "Living connection to the device will be closed now, because this client isn't "
-                                "authenticated by the device.")
+                                "Living client connection to the device will be closed now, "
+                                "because this client isn't authenticated by the device.")
                             await self.__start_disconnecting()
                             await self.__lifecycle.wait_for(lambda: not self.connected)
+                        elif not self.__is_ws_connected():
+                            self.__logger.warning(
+                                "Living client connection to the device will be closed now, "
+                                "because the underlying websocket connection was closed.")
+                            await self.__start_disconnecting()
+                            await self.__lifecycle.wait_for(lambda: not self.connected)                            
 
                         if self.__ws is None:
                             # Establish connection to the device
-                            self.__logger.info("Establishing connection to the device...")
+                            self.__logger.info("Establishing websocket connection to the device...")
                             try:
                                 self.__ws = await self.__client_session.ws_connect(
                                     f"ws://{self.__connection_options.host}:8080/")
-                                self.__logger.info("Connection to the device has been established successfully.")
+                                self.__logger.info("Websocket connection to the device has been established successfully.")
                             except BaseException as ex:
                                 self.__ws = None
                                 if handle_connection_error:
-                                    self.__logger.exception("Unable to establish connection to the device.")
+                                    self.__logger.exception("Unable to establish websocket connection to the device.")
                                 else:
                                     raise RemootioClientConnectionEstablishmentError(
-                                        self, "Unable to establish connection to the device.") from ex
+                                        self, "Unable to establish websocket connection to the device.") from ex
 
                             if self.__is_ws_connected(self.__ws):
                                 # Authenticate this client by the device
@@ -444,7 +450,7 @@ class RemootioClient(AsyncClass):
         try:
             await self.__send_frame(AuthFrame(), ws=ws)
 
-            frame: [dict, AbstractFrame] = await ws.receive_json(timeout=30)
+            frame: Union[dict, AbstractFrame] = await ws.receive_json(timeout=30)
             ensure_frame_type(frame, FrameType.ENCRYPTED)
 
             frame = await self.__decrypt_frame(EncryptedFrame(json=frame))
@@ -531,10 +537,10 @@ class RemootioClient(AsyncClass):
                 try:
                     if self.__ws is not None and not self.__ws.closed:
                         try:
-                            self.__logger.info("Disconnecting from the device...")
+                            self.__logger.info("Closing websocket connection to the device...")
                             await self.__ws.close()
                         except BaseException:
-                            self.__logger.warning("Unable to disconnect from the device because of an error.",
+                            self.__logger.warning("Unable to close websocket connection to the device because of an error.",
                                                   exc_info=(self.__logger.getEffectiveLevel() == logging.DEBUG))
 
                     self.__session_key = None
@@ -673,7 +679,7 @@ class RemootioClient(AsyncClass):
 
         return result
 
-    async def __wait_for_task_stopped(self, task: [str | asyncio.Task]) -> bool:
+    async def __wait_for_task_stopped(self, task: Union[str, asyncio.Task]) -> bool:
         result: bool = False
 
         if isinstance(task, str):
