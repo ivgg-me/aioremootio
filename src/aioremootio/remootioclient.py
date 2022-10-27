@@ -385,24 +385,24 @@ class RemootioClient(AsyncClass):
     # --------------------------
 
     async def __connect(self, handle_connection_error: bool = True) -> ClientWebSocketResponse:
+        if self.__initialized and not self.__is_ws_connected(self.__ws) and self.__authenticated:
+            self.__logger.warning(
+                "Living client connection to the device will be closed now, "
+                "because the underlying websocket connection was closed.")
+            await self.__disconnect()
+        
         if not self.connected:
             self.__connecting = True
             try:
                 async with self.__lifecycle:
                     try:
-                        if self.__is_ws_connected() and not self.__authenticated:
+                        if self.__is_ws_connected(self.__ws) and not self.__authenticated:
                             self.__logger.warning(
                                 "Living client connection to the device will be closed now, "
                                 "because this client isn't authenticated by the device.")
                             await self.__start_disconnecting()
                             await self.__lifecycle.wait_for(lambda: not self.connected)
-                        elif not self.__is_ws_connected():
-                            self.__logger.warning(
-                                "Living client connection to the device will be closed now, "
-                                "because the underlying websocket connection was closed.")
-                            await self.__start_disconnecting()
-                            await self.__lifecycle.wait_for(lambda: not self.connected)                            
-
+                            
                         if self.__ws is None:
                             # Establish connection to the device
                             self.__logger.info("Establishing websocket connection to the device...")
@@ -1281,7 +1281,7 @@ class RemootioClient(AsyncClass):
 
         return result
 
-    def __is_ws_connected(self, ws: Optional[ClientWebSocketResponse] = None):
+    def __is_ws_connected(self, ws: Optional[ClientWebSocketResponse] = None) -> bool:
         if ws is None:
             ws = self.__ws
 
