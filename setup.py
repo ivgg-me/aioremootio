@@ -8,7 +8,7 @@ install_requires = list(val.strip() for val in open(here / 'requirements.txt'))
 
 setup(
     name="aioremootio",
-    version="1.0.0.alpha17",
+    version="1.0.0.dev0",
     description="An asynchronous API client library for Remootio (http://www.remootio.com/)",
     long_description=long_description,
     long_description_content_type="text/markdown",
