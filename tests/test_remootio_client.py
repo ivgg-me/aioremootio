@@ -44,34 +44,44 @@ class RemootioClientTestCase(unittest.TestCase):
     DEFAULT_MAXIMUM_ATTEMPTS = 200
     WAIT_TIME_BETWEEN_ATTEMPTS = 1
 
+    __set_up: bool = False
     __logger: Optional[logging.Logger]
     __remootio_device_configuration: Optional[tests.RemootioDeviceConfiguration]
     __state_change_listener: RemootioClientTestStateChangeListener
-
-    def setUp(self) -> NoReturn:
-        super().setUp()
-
-        self.__logger = logging.getLogger(__name__)
-        self.__logger.setLevel(logging.DEBUG)
+    
+    @classmethod
+    def setUpClass(cls) -> NoReturn:
+        cls.__logger = logging.getLogger(__name__)
+        cls.__logger.setLevel(logging.DEBUG)
 
         handler: logging.Handler = logging.StreamHandler()
         handler.setFormatter(logging.Formatter(fmt="%(asctime)s [%(levelname)s] %(message)s"))
-        self.__logger.addHandler(handler)
+        cls.__logger.addHandler(handler)
 
-        self.__remootio_device_configuration = tests.create_remootio_device_configurations()
+        cls.__remootio_device_configuration = tests.create_remootio_device_configurations()
+    
+    def setUp(self) -> NoReturn:
         self.__state_change_listener = RemootioClientTestStateChangeListener()
 
     def test_remootio_client_0001(self):
+        self.__logger.info("ENTRY: %s", "test_remootio_client_0001")
+        
         if self.__remootio_device_configuration is not None:
             asyncio.get_event_loop().run_until_complete(self.__test_remootio_client_0001())
         else:
             self.__logger.warning("Tests will be skipped because of missing Remootio device configuration.")
+        
+        self.__logger.info("RETURN: %s", "test_remootio_client_0001")
 
     def test_remootio_client_0002(self):
+        self.__logger.info("ENTRY: %s", "test_remootio_client_0002")
+        
         if self.__remootio_device_configuration is not None:
             asyncio.get_event_loop().run_until_complete(self.__test_remootio_client_0002())
         else:
             self.__logger.warning("Tests will be skipped because of missing Remootio device configuration.")
+        
+        self.__logger.info("RETURN: %s", "test_remootio_client_0002")
 
     async def __test_remootio_client_0001(self):
         async with aiohttp.ClientSession() as client_session:
@@ -99,7 +109,7 @@ class RemootioClientTestCase(unittest.TestCase):
 
                 await asyncio.wait_for(
                     self.__condition_is_met(self.__is_state_change_listener_invoked, remootio_client,
-                                            expected_invoke_count=2),
+                                            expected_invoke_count=2, logger=self.__logger),
                     timeout=RemootioClientTestCase.TIMEOUT
                 )
 
@@ -113,7 +123,7 @@ class RemootioClientTestCase(unittest.TestCase):
 
                         await asyncio.wait_for(
                             self.__condition_is_met(self.__is_state_change_listener_invoked, remootio_client,
-                                                    expected_invoke_count=4),
+                                                    expected_invoke_count=4, logger=self.__logger),
                             timeout=RemootioClientTestCase.TIMEOUT
                         )
 
@@ -125,7 +135,7 @@ class RemootioClientTestCase(unittest.TestCase):
 
                         await asyncio.wait_for(
                             self.__condition_is_met(self.__is_state_change_listener_invoked, remootio_client,
-                                                    expected_invoke_count=6),
+                                                    expected_invoke_count=6, logger=self.__logger),
                             timeout=RemootioClientTestCase.TIMEOUT
                         )
 
@@ -137,7 +147,7 @@ class RemootioClientTestCase(unittest.TestCase):
 
                         await asyncio.wait_for(
                             self.__condition_is_met(self.__is_state_change_listener_invoked, remootio_client,
-                                                    expected_invoke_count=4),
+                                                    expected_invoke_count=4, logger=self.__logger),
                             timeout=RemootioClientTestCase.TIMEOUT
                         )
 
@@ -149,7 +159,7 @@ class RemootioClientTestCase(unittest.TestCase):
 
                         await asyncio.wait_for(
                             self.__condition_is_met(self.__is_state_change_listener_invoked, remootio_client,
-                                                    expected_invoke_count=6),
+                                                    expected_invoke_count=6, logger=self.__logger),
                             timeout=RemootioClientTestCase.TIMEOUT
                         )
 
@@ -186,7 +196,7 @@ class RemootioClientTestCase(unittest.TestCase):
 
                 await asyncio.wait_for(
                     self.__condition_is_met(self.__is_state_change_listener_invoked, remootio_client,
-                                            expected_invoke_count=2),
+                                            expected_invoke_count=2, logger=self.__logger),
                     timeout=RemootioClientTestCase.TIMEOUT
                 )
 
@@ -200,7 +210,7 @@ class RemootioClientTestCase(unittest.TestCase):
 
                         await asyncio.wait_for(
                             self.__condition_is_met(self.__is_state_change_listener_invoked, remootio_client,
-                                                    expected_invoke_count=4),
+                                                    expected_invoke_count=4, logger=self.__logger),
                             timeout=RemootioClientTestCase.TIMEOUT
                         )
 
@@ -218,7 +228,7 @@ class RemootioClientTestCase(unittest.TestCase):
 
                         await asyncio.wait_for(
                             self.__condition_is_met(self.__is_state_change_listener_invoked, remootio_client,
-                                                    expected_invoke_count=6),
+                                                    expected_invoke_count=6, logger=self.__logger),
                             timeout=RemootioClientTestCase.TIMEOUT
                         )
 
@@ -238,7 +248,7 @@ class RemootioClientTestCase(unittest.TestCase):
 
                         await asyncio.wait_for(
                             self.__condition_is_met(self.__is_state_change_listener_invoked, remootio_client,
-                                                    expected_invoke_count=4),
+                                                    expected_invoke_count=4, logger=self.__logger),
                             timeout=RemootioClientTestCase.TIMEOUT
                         )
 
@@ -256,7 +266,7 @@ class RemootioClientTestCase(unittest.TestCase):
 
                         await asyncio.wait_for(
                             self.__condition_is_met(self.__is_state_change_listener_invoked, remootio_client,
-                                                    expected_invoke_count=6),
+                                                    expected_invoke_count=6, logger=self.__logger),
                             timeout=RemootioClientTestCase.TIMEOUT
                         )
 
@@ -290,6 +300,9 @@ class RemootioClientTestCase(unittest.TestCase):
         return result
 
     def __is_state_change_listener_invoked(self, remootio_client: aioremootio.RemootioClient, **kwargs) -> bool:
+        logger: logging.Logger = kwargs["logger"]
+        logger.info("Checking state change listener's invocation count. Actual [%s] Expected [%s]",
+                    self.__state_change_listener.invoke_count, kwargs["expected_invoke_count"])
         return self.__state_change_listener.invoke_count == kwargs["expected_invoke_count"]
 
 
