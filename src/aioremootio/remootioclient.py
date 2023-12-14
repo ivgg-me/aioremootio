@@ -752,6 +752,7 @@ class RemootioClient(AsyncClass):
                         self.__logger.warning("Receiving and handling of messages by this client will be delayed "
                                               "because connection to the device can't be established.")
                         await asyncio.sleep(MESSAGE_HANDLER_HEARTBEAT)
+                        await self.__disconnect()
                         continue
 
                     if self.__is_ws_connected(ws):
@@ -800,6 +801,7 @@ class RemootioClient(AsyncClass):
                         self.__logger.warning("Receiving and handling of messages by this client will be delayed "
                                               "because connection to the device can't be established.")
                         await asyncio.sleep(MESSAGE_HANDLER_HEARTBEAT)
+                        await self.__disconnect()
                 else:
                     self.__logger.info("Receiving and handling of messages by this client will be now stopped.")
                     return

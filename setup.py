@@ -8,13 +8,13 @@ install_requires = list(val.strip() for val in open(here / 'requirements.txt'))
 
 setup(
     name="aioremootio",
-    version="1.0.0.dev0",
+    version="1.0.0",
     description="An asynchronous API client library for Remootio (http://www.remootio.com/)",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/ivgg-me/aioremootio",
-    author="Gergö Gabor Ilyes-Veisz",
-    author_email="i@ivgg.me",
+    url="https://github.com/peaceduck/aioremootio",
+    author="Fredrik Andersson",
+    author_email="fredrik@peaceduck.se",
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Framework :: AsyncIO",
