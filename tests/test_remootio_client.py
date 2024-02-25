@@ -22,6 +22,7 @@ import logging
 import tests
 import asyncio
 import aiohttp
+from test.support import busy_retry, SHORT_TIMEOUT
 
 
 class RemootioClientTestStateChangeListener(aioremootio.Listener[aioremootio.StateChange]):
@@ -39,7 +40,7 @@ class RemootioClientTestStateChangeListener(aioremootio.Listener[aioremootio.Sta
         return self.__invoke_count
 
 
-class RemootioClientTestCase(unittest.TestCase):
+class RemootioClientTestCase(unittest.IsolatedAsyncioTestCase):
     TIMEOUT = 200
     DEFAULT_MAXIMUM_ATTEMPTS = 200
     WAIT_TIME_BETWEEN_ATTEMPTS = 1
@@ -63,227 +64,232 @@ class RemootioClientTestCase(unittest.TestCase):
     def setUp(self) -> NoReturn:
         self.__state_change_listener = RemootioClientTestStateChangeListener()
 
-    def test_remootio_client_0001(self):
+    async def test_remootio_client_0001(self):
         self.__logger.info("ENTRY: %s", "test_remootio_client_0001")
         
         if self.__remootio_device_configuration is not None:
-            asyncio.get_event_loop().run_until_complete(self.__test_remootio_client_0001())
+            async with aiohttp.ClientSession() as client_session:
+                remootio_client: aioremootio.RemootioClient = \
+                    await aioremootio.RemootioClient(
+                        self.__remootio_device_configuration,
+                        client_session,
+                        LoggerConfiguration(logger=self.__logger),
+                        [self.__state_change_listener]
+                    )
+
+                try:
+                    await asyncio.wait_for(
+                        self.__condition_is_met(self.__has_device_answered_to_hello, remootio_client, logger=self.__logger),
+                        timeout=RemootioClientTestCase.TIMEOUT
+                    )
+
+                    api_version: int = remootio_client.api_version
+
+                    self.assertEqual(api_version, self.__remootio_device_configuration.api_version,
+                                    "API version isn't the expected.")
+
+                    if api_version >= 2:
+                        serial_number: str = remootio_client.serial_number
+
+                        self.assertIsNotNone(
+                            serial_number,
+                            "By devices with API version >= 2 serial number must be set after successful initialization of "
+                            "the client.")
+
+                    await asyncio.wait_for(
+                        self.__condition_is_met(self.__is_state_change_listener_invoked, remootio_client,
+                                                expected_invoke_count=2, logger=self.__logger),
+                        timeout=RemootioClientTestCase.TIMEOUT
+                    )
+
+                    self.assertNotEqual(remootio_client.state, State.UNKNOWN, "State isn't the expected.")
+
+                    if remootio_client.state != State.NO_SENSOR_INSTALLED:
+                        if remootio_client.state == State.OPEN:
+                            await remootio_client.trigger_close()
+
+                            self.__logger.info("Waiting for that the gate / garage door is closed...")
+
+                            await asyncio.wait_for(
+                                self.__condition_is_met(self.__is_state_change_listener_invoked, remootio_client,
+                                                        expected_invoke_count=4, logger=self.__logger),
+                                timeout=RemootioClientTestCase.TIMEOUT
+                            )
+
+                            self.assertEqual(remootio_client.state, State.CLOSED, "State isn't the expected.")
+
+                            await remootio_client.trigger_open()
+
+                            self.__logger.info("Waiting for that the gate / garage door is open...")
+
+                            await asyncio.wait_for(
+                                self.__condition_is_met(self.__is_state_change_listener_invoked, remootio_client,
+                                                        expected_invoke_count=6, logger=self.__logger),
+                                timeout=RemootioClientTestCase.TIMEOUT
+                            )
+
+                            self.assertEqual(remootio_client.state, State.OPEN, "State isn't the expected.")
+                        elif remootio_client.state == State.CLOSED:
+                            await remootio_client.trigger_open()
+
+                            self.__logger.info("Waiting for that the gate / garage door is open...")
+
+                            await asyncio.wait_for(
+                                self.__condition_is_met(self.__is_state_change_listener_invoked, remootio_client,
+                                                        expected_invoke_count=4, logger=self.__logger),
+                                timeout=RemootioClientTestCase.TIMEOUT
+                            )
+
+                            self.assertEqual(remootio_client.state, State.OPEN, "State isn't the expected.")
+
+                            await remootio_client.trigger_close()
+
+                            self.__logger.info("Waiting for that the gate / garage door is closed...")
+
+                            await asyncio.wait_for(
+                                self.__condition_is_met(self.__is_state_change_listener_invoked, remootio_client,
+                                                        expected_invoke_count=6, logger=self.__logger),
+                                timeout=RemootioClientTestCase.TIMEOUT
+                            )
+
+                            self.assertEqual(remootio_client.state, State.CLOSED, "State isn't the expected.")
+                    else:
+                        self.__logger.warning("Further functional tests will be skipped because the Remootio device "
+                                            "hasn't a sensor installed.")
+                finally:
+                    await remootio_client.terminate()
         else:
             self.__logger.warning("Tests will be skipped because of missing Remootio device configuration.")
         
         self.__logger.info("RETURN: %s", "test_remootio_client_0001")
 
-    def test_remootio_client_0002(self):
+    async def test_remootio_client_0002(self):
         self.__logger.info("ENTRY: %s", "test_remootio_client_0002")
         
         if self.__remootio_device_configuration is not None:
-            asyncio.get_event_loop().run_until_complete(self.__test_remootio_client_0002())
+            async with aiohttp.ClientSession() as client_session:
+                remootio_client: aioremootio.RemootioClient = \
+                    await aioremootio.RemootioClient(
+                        self.__remootio_device_configuration,
+                        client_session,
+                        LoggerConfiguration(logger=self.__logger),
+                        [self.__state_change_listener]
+                    )
+
+                try:
+                    await asyncio.wait_for(
+                        self.__condition_is_met(self.__has_device_answered_to_hello, remootio_client, logger=self.__logger),
+                        timeout=RemootioClientTestCase.TIMEOUT
+                    )
+
+                    api_version: int = remootio_client.api_version
+
+                    self.assertEqual(api_version, self.__remootio_device_configuration.api_version,
+                                    "API version isn't the expected.")
+
+                    if api_version >= 2:
+                        serial_number: str = remootio_client.serial_number
+
+                        self.assertIsNotNone(
+                            serial_number,
+                            "By devices with API version >= 2 serial number must be set after successful initialization of "
+                            "the client.")
+
+                    await asyncio.wait_for(
+                        self.__condition_is_met(self.__is_state_change_listener_invoked, remootio_client,
+                                                expected_invoke_count=2, logger=self.__logger),
+                        timeout=RemootioClientTestCase.TIMEOUT
+                    )
+
+                    self.assertNotEqual(remootio_client.state, State.UNKNOWN, "State isn't the expected.")
+
+                    if remootio_client.state != State.NO_SENSOR_INSTALLED:
+                        if remootio_client.state == State.OPEN:
+                            await remootio_client.trigger_close()
+
+                            self.__logger.info("Waiting for that the gate / garage door is closed...")
+
+                            await asyncio.wait_for(
+                                self.__condition_is_met(self.__is_state_change_listener_invoked, remootio_client,
+                                                        expected_invoke_count=4, logger=self.__logger),
+                                timeout=RemootioClientTestCase.TIMEOUT
+                            )
+
+                            self.assertEqual(remootio_client.state, State.CLOSED, "State isn't the expected.")
+
+                            await remootio_client.disconnect()
+
+                            self.assertTrue(not remootio_client.connected, "Client appears still connected to the device.")
+
+                            await remootio_client.trigger_open()
+
+                            self.assertTrue(remootio_client.connected, "Client appears still disconnected from the device.")
+
+                            self.__logger.info("Waiting for that the gate / garage door is open...")
+
+                            await asyncio.wait_for(
+                                self.__condition_is_met(self.__is_state_change_listener_invoked, remootio_client,
+                                                        expected_invoke_count=6, logger=self.__logger),
+                                timeout=RemootioClientTestCase.TIMEOUT
+                            )
+
+                            self.assertEqual(remootio_client.state, State.OPEN, "State isn't the expected.")
+
+                            await remootio_client.disconnect()
+
+                            self.assertTrue(not remootio_client.connected, "Client appears still connected to the device.")
+
+                            await remootio_client.connect()
+
+                            self.assertTrue(remootio_client.connected, "Client appears still disconnected from the device.")
+                        elif remootio_client.state == State.CLOSED:
+                            await remootio_client.trigger_open()
+
+                            self.__logger.info("Waiting for that the gate / garage door is open...")
+
+                            await asyncio.wait_for(
+                                self.__condition_is_met(self.__is_state_change_listener_invoked, remootio_client,
+                                                        expected_invoke_count=4, logger=self.__logger),
+                                timeout=RemootioClientTestCase.TIMEOUT
+                            )
+
+                            self.assertEqual(remootio_client.state, State.OPEN, "State isn't the expected.")
+
+                            await remootio_client.disconnect()
+
+                            self.assertTrue(not remootio_client.connected, "Client appears still connected to the device.")
+
+                            await remootio_client.trigger_close()
+
+                            self.assertTrue(remootio_client.connected, "Client appears still disconnected from the device.")
+
+                            self.__logger.info("Waiting for that the gate / garage door is closed...")
+
+                            await asyncio.wait_for(
+                                self.__condition_is_met(self.__is_state_change_listener_invoked, remootio_client,
+                                                        expected_invoke_count=6, logger=self.__logger),
+                                timeout=RemootioClientTestCase.TIMEOUT
+                            )
+
+                            self.assertEqual(remootio_client.state, State.CLOSED, "State isn't the expected.")
+
+                            await remootio_client.disconnect()
+
+                            self.assertTrue(not remootio_client.connected, "Client appears still connected to the device.")
+
+                            await remootio_client.connect()
+
+                            self.assertTrue(remootio_client.connected, "Client appears still disconnected from the device.")
+                    else:
+                        self.__logger.warning("Further functional tests will be skipped because the Remootio device "
+                                            "hasn't a sensor installed.")
+                finally:
+                    await remootio_client.terminate()
         else:
             self.__logger.warning("Tests will be skipped because of missing Remootio device configuration.")
         
         self.__logger.info("RETURN: %s", "test_remootio_client_0002")
-
-    async def __test_remootio_client_0001(self):
-        async with aiohttp.ClientSession() as client_session:
-            remootio_client: aioremootio.RemootioClient = \
-                await aioremootio.RemootioClient(
-                    self.__remootio_device_configuration,
-                    client_session,
-                    LoggerConfiguration(logger=self.__logger),
-                    [self.__state_change_listener]
-                )
-
-            try:
-                api_version: int = remootio_client.api_version
-
-                self.assertEqual(api_version, self.__remootio_device_configuration.api_version,
-                                 "API version isn't the expected.")
-
-                if api_version >= 2:
-                    serial_number: str = remootio_client.serial_number
-
-                    self.assertIsNotNone(
-                        serial_number,
-                        "By devices with API version >= 2 serial number must be set after successful initialization of "
-                        "the client.")
-
-                await asyncio.wait_for(
-                    self.__condition_is_met(self.__is_state_change_listener_invoked, remootio_client,
-                                            expected_invoke_count=2, logger=self.__logger),
-                    timeout=RemootioClientTestCase.TIMEOUT
-                )
-
-                self.assertNotEqual(remootio_client.state, State.UNKNOWN, "State isn't the expected.")
-
-                if remootio_client.state != State.NO_SENSOR_INSTALLED:
-                    if remootio_client.state == State.OPEN:
-                        await remootio_client.trigger_close()
-
-                        self.__logger.info("Waiting for that the gate / garage door is closed...")
-
-                        await asyncio.wait_for(
-                            self.__condition_is_met(self.__is_state_change_listener_invoked, remootio_client,
-                                                    expected_invoke_count=4, logger=self.__logger),
-                            timeout=RemootioClientTestCase.TIMEOUT
-                        )
-
-                        self.assertEqual(remootio_client.state, State.CLOSED, "State isn't the expected.")
-
-                        await remootio_client.trigger_open()
-
-                        self.__logger.info("Waiting for that the gate / garage door is open...")
-
-                        await asyncio.wait_for(
-                            self.__condition_is_met(self.__is_state_change_listener_invoked, remootio_client,
-                                                    expected_invoke_count=6, logger=self.__logger),
-                            timeout=RemootioClientTestCase.TIMEOUT
-                        )
-
-                        self.assertEqual(remootio_client.state, State.OPEN, "State isn't the expected.")
-                    elif remootio_client.state == State.CLOSED:
-                        await remootio_client.trigger_open()
-
-                        self.__logger.info("Waiting for that the gate / garage door is open...")
-
-                        await asyncio.wait_for(
-                            self.__condition_is_met(self.__is_state_change_listener_invoked, remootio_client,
-                                                    expected_invoke_count=4, logger=self.__logger),
-                            timeout=RemootioClientTestCase.TIMEOUT
-                        )
-
-                        self.assertEqual(remootio_client.state, State.OPEN, "State isn't the expected.")
-
-                        await remootio_client.trigger_close()
-
-                        self.__logger.info("Waiting for that the gate / garage door is closed...")
-
-                        await asyncio.wait_for(
-                            self.__condition_is_met(self.__is_state_change_listener_invoked, remootio_client,
-                                                    expected_invoke_count=6, logger=self.__logger),
-                            timeout=RemootioClientTestCase.TIMEOUT
-                        )
-
-                        self.assertEqual(remootio_client.state, State.CLOSED, "State isn't the expected.")
-                else:
-                    self.__logger.warning("Further functional tests will be skipped because the Remootio device "
-                                          "hasn't a sensor installed.")
-            finally:
-                await remootio_client.terminate()
-
-    async def __test_remootio_client_0002(self):
-        async with aiohttp.ClientSession() as client_session:
-            remootio_client: aioremootio.RemootioClient = \
-                await aioremootio.RemootioClient(
-                    self.__remootio_device_configuration,
-                    client_session,
-                    LoggerConfiguration(logger=self.__logger),
-                    [self.__state_change_listener]
-                )
-
-            try:
-                api_version: int = remootio_client.api_version
-
-                self.assertEqual(api_version, self.__remootio_device_configuration.api_version,
-                                 "API version isn't the expected.")
-
-                if api_version >= 2:
-                    serial_number: str = remootio_client.serial_number
-
-                    self.assertIsNotNone(
-                        serial_number,
-                        "By devices with API version >= 2 serial number must be set after successful initialization of "
-                        "the client.")
-
-                await asyncio.wait_for(
-                    self.__condition_is_met(self.__is_state_change_listener_invoked, remootio_client,
-                                            expected_invoke_count=2, logger=self.__logger),
-                    timeout=RemootioClientTestCase.TIMEOUT
-                )
-
-                self.assertNotEqual(remootio_client.state, State.UNKNOWN, "State isn't the expected.")
-
-                if remootio_client.state != State.NO_SENSOR_INSTALLED:
-                    if remootio_client.state == State.OPEN:
-                        await remootio_client.trigger_close()
-
-                        self.__logger.info("Waiting for that the gate / garage door is closed...")
-
-                        await asyncio.wait_for(
-                            self.__condition_is_met(self.__is_state_change_listener_invoked, remootio_client,
-                                                    expected_invoke_count=4, logger=self.__logger),
-                            timeout=RemootioClientTestCase.TIMEOUT
-                        )
-
-                        self.assertEqual(remootio_client.state, State.CLOSED, "State isn't the expected.")
-
-                        await remootio_client.disconnect()
-
-                        self.assertTrue(not remootio_client.connected, "Client appears still connected to the device.")
-
-                        await remootio_client.trigger_open()
-
-                        self.assertTrue(remootio_client.connected, "Client appears still disconnected from the device.")
-
-                        self.__logger.info("Waiting for that the gate / garage door is open...")
-
-                        await asyncio.wait_for(
-                            self.__condition_is_met(self.__is_state_change_listener_invoked, remootio_client,
-                                                    expected_invoke_count=6, logger=self.__logger),
-                            timeout=RemootioClientTestCase.TIMEOUT
-                        )
-
-                        self.assertEqual(remootio_client.state, State.OPEN, "State isn't the expected.")
-
-                        await remootio_client.disconnect()
-
-                        self.assertTrue(not remootio_client.connected, "Client appears still connected to the device.")
-
-                        await remootio_client.connect()
-
-                        self.assertTrue(remootio_client.connected, "Client appears still disconnected from the device.")
-                    elif remootio_client.state == State.CLOSED:
-                        await remootio_client.trigger_open()
-
-                        self.__logger.info("Waiting for that the gate / garage door is open...")
-
-                        await asyncio.wait_for(
-                            self.__condition_is_met(self.__is_state_change_listener_invoked, remootio_client,
-                                                    expected_invoke_count=4, logger=self.__logger),
-                            timeout=RemootioClientTestCase.TIMEOUT
-                        )
-
-                        self.assertEqual(remootio_client.state, State.OPEN, "State isn't the expected.")
-
-                        await remootio_client.disconnect()
-
-                        self.assertTrue(not remootio_client.connected, "Client appears still connected to the device.")
-
-                        await remootio_client.trigger_close()
-
-                        self.assertTrue(remootio_client.connected, "Client appears still disconnected from the device.")
-
-                        self.__logger.info("Waiting for that the gate / garage door is closed...")
-
-                        await asyncio.wait_for(
-                            self.__condition_is_met(self.__is_state_change_listener_invoked, remootio_client,
-                                                    expected_invoke_count=6, logger=self.__logger),
-                            timeout=RemootioClientTestCase.TIMEOUT
-                        )
-
-                        self.assertEqual(remootio_client.state, State.CLOSED, "State isn't the expected.")
-
-                        await remootio_client.disconnect()
-
-                        self.assertTrue(not remootio_client.connected, "Client appears still connected to the device.")
-
-                        await remootio_client.connect()
-
-                        self.assertTrue(remootio_client.connected, "Client appears still disconnected from the device.")
-                else:
-                    self.__logger.warning("Further functional tests will be skipped because the Remootio device "
-                                          "hasn't a sensor installed.")
-            finally:
-                await remootio_client.terminate()
+        
 
     async def __condition_is_met(self, condition_callback: Callable, remootio_client: aioremootio.RemootioClient,
                                  maximum_attempts: int = DEFAULT_MAXIMUM_ATTEMPTS, **kwargs) -> bool:
@@ -304,6 +310,11 @@ class RemootioClientTestCase(unittest.TestCase):
         logger.info("Checking state change listener's invocation count. Actual [%s] Expected [%s]",
                     self.__state_change_listener.invoke_count, kwargs["expected_invoke_count"])
         return self.__state_change_listener.invoke_count == kwargs["expected_invoke_count"]
+    
+    def __has_device_answered_to_hello(self, remootio_client: aioremootio.RemootioClient, **kwargs) -> bool:
+        logger: logging.Logger = kwargs["logger"]
+        logger.info("Checking whether the device has answered to the client's \"Hello\".")
+        return remootio_client.api_version is not None
 
 
 if __name__ == '__main__':

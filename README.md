@@ -119,7 +119,7 @@ python example.py --help
 
 ## Running the bundled tests
 
-To run the bundled tests you must create the `.\remootio_devices.configuration.json` file with a content according 
+To run the bundled tests you must create the `.\remootio_device.configuration.json` file with a content according 
 to the following template.
 
 ```
